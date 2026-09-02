@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  * {
+    font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+}
+
+/* Custom scrollbar matching Google apps */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 120, 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 120, 0.45);
+}
+
+/* RTL Helpers */
+.rtl-grid {
+  direction: rtl;
+}
+
+/* Safe area for mobile devices */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+}
+
+/* Gallery page slide animation */
+@keyframes gallery-slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes gallery-slide-in-left {
+  from { transform: translateX(-100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.gallery-slide-in-right { animation: gallery-slide-in-right 0.35s ease-out; }
+.gallery-slide-in-left { animation: gallery-slide-in-left 0.35s ease-out; }
+
+/* Reusable animation utilities */
+@keyframes anim-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes anim-fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes anim-scale-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
+@keyframes anim-slide-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+.anim-fade-in { animation: anim-fade-in 0.25s ease-out both; }
+.anim-fade-up { animation: anim-fade-up 0.3s ease-out both; }
+.anim-scale-in { animation: anim-scale-in 0.18s ease-out both; }
+.anim-slide-up { animation: anim-slide-up 0.3s ease-out both; }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade-in, .anim-fade-up, .anim-scale-in, .anim-slide-up,
+  .gallery-slide-in-right, .gallery-slide-in-left { animation: none !important; }
+}
+
+/* Print / PDF export: only the note content is shown */
+.print-doc { display: none; }
+@media print {
+  .print-doc { display: block !important; }
+  #root > div:not(.print-doc) { display: none !important; }
+  body { background: #ffffff !important; }
+  .print-doc { background: #ffffff; color: #1A1C16; }
+}

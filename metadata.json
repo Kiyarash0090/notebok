@@ -1,0 +1,7 @@
+{
+  "name": "NIVRA",
+  "description": "Write Learn Remember — مدیریت و دسته‌بندی جزوه‌ها، فرمول‌ها و نکات مهم با ذخیره‌سازی و پشتیبان‌گیری محلی و نمایشگر پیشرفته آفیس و اسناد متنی.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
