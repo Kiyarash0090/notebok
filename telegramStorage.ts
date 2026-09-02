@@ -12,6 +12,7 @@ export interface TelegramConfig {
   chatId: string; // e.g. "-1001234567890" or "@my_storage_channel"
   autoSyncDb: boolean;
   lastSyncAt?: string;
+  lastSyncMessageId?: number;
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -36,6 +37,7 @@ export function getTelegramConfig(): TelegramConfig {
         chatId: String(parsed.chatId || ''),
         autoSyncDb: parsed.autoSyncDb !== undefined ? Boolean(parsed.autoSyncDb) : true,
         lastSyncAt: parsed.lastSyncAt,
+        lastSyncMessageId: parsed.lastSyncMessageId ? Number(parsed.lastSyncMessageId) : undefined,
       };
     }
   } catch (err) {
@@ -243,15 +245,16 @@ export async function syncDbToTelegram(dbData: any): Promise<{ messageId: number
     workers: 2,
   });
 
-  // Save last sync time
+  // Save last sync time & message ID
   cfg.lastSyncAt = new Date().toISOString();
+  cfg.lastSyncMessageId = sent.id;
   saveTelegramConfig(cfg);
 
   return { messageId: sent.id };
 }
 
 /**
-  Restore latest DB backup from Telegram Cloud
+  Restore latest DB backup from Telegram Cloud using Bot-allowed MTProto calls
  */
 export async function restoreDbFromTelegram(): Promise<{ db: any; messageId: number }> {
   const cfg = getTelegramConfig();
@@ -260,16 +263,75 @@ export async function restoreDbFromTelegram(): Promise<{ db: any; messageId: num
   }
 
   const client = await getTelegramClient(cfg);
+  let targetMsg: any = null;
 
-  // Get last 20 messages to find the latest [NIVRA_DB_SYNC]
-  const messages = await client.getMessages(cfg.chatId, { limit: 20 });
-  const dbMsg = messages.find((m) => m.text && m.text.includes('[NIVRA_DB_SYNC]') && m.media);
+  // 1. Try saved lastSyncMessageId directly if available
+  if (cfg.lastSyncMessageId) {
+    try {
+      const msgs = await client.getMessages(cfg.chatId, { ids: [cfg.lastSyncMessageId] });
+      if (msgs && msgs[0] && msgs[0].media && msgs[0].text && msgs[0].text.includes('[NIVRA_DB_SYNC]')) {
+        targetMsg = msgs[0];
+      }
+    } catch (err) {
+      console.log('lastSyncMessageId direct lookup failed, scanning channel:', err);
+    }
+  }
 
-  if (!dbMsg || !dbMsg.media) {
+  // 2. If not found, probe channel top ID and scan message IDs in batches using GetMessages
+  if (!targetMsg) {
+    let topId = 0;
+    try {
+      const probeMsg = await client.sendMessage(cfg.chatId, {
+        message: '🔍 در حال جستجوی بک‌آپ دیتابیس NIVRA...',
+      });
+      topId = probeMsg.id;
+      try {
+        await probeMsg.delete({ revoke: true });
+      } catch {}
+    } catch (err: any) {
+      console.error('Probe message failed:', err.message);
+    }
+
+    if (!topId && cfg.lastSyncMessageId) {
+      topId = cfg.lastSyncMessageId + 50;
+    }
+
+    if (!topId) {
+      throw new Error('امکان دریافت وضعیت پیام‌های کانال تلگرام وجود ندارد. لطفاً دسترسی‌های ربات و Chat ID را بررسی کنید.');
+    }
+
+    // Generate array of previous 150 message IDs
+    const idsToCheck: number[] = [];
+    for (let i = 0; i < 150; i++) {
+      const id = topId - i;
+      if (id > 0) idsToCheck.push(id);
+    }
+
+    // Fetch messages in chunks of 50 via GetMessages (allowed for Bots)
+    const foundMessages: any[] = [];
+    const chunkSize = 50;
+    for (let i = 0; i < idsToCheck.length; i += chunkSize) {
+      const chunk = idsToCheck.slice(i, i + chunkSize);
+      try {
+        const msgs = await client.getMessages(cfg.chatId, { ids: chunk });
+        if (Array.isArray(msgs)) {
+          foundMessages.push(...msgs.filter(Boolean));
+        }
+      } catch (err) {
+        console.error('Error fetching message chunk from Telegram:', err);
+      }
+    }
+
+    // Sort newest first
+    foundMessages.sort((a, b) => b.id - a.id);
+    targetMsg = foundMessages.find((m) => m && m.text && m.text.includes('[NIVRA_DB_SYNC]') && m.media);
+  }
+
+  if (!targetMsg || !targetMsg.media) {
     throw new Error('هیچ بک‌آپی از دیتابیس با برچسب [NIVRA_DB_SYNC] در کانال پیدا نشد.');
   }
 
-  const downloaded = await client.downloadMedia(dbMsg.media, {});
+  const downloaded = await client.downloadMedia(targetMsg.media, {});
   if (!downloaded) {
     throw new Error('خطا در دانلود بک‌آپ دیتابیس از تلگرام');
   }
@@ -277,7 +339,11 @@ export async function restoreDbFromTelegram(): Promise<{ db: any; messageId: num
   const jsonStr = downloaded.toString('utf-8');
   const parsed = JSON.parse(jsonStr);
 
-  return { db: parsed, messageId: dbMsg.id };
+  // Update cfg with found message ID
+  cfg.lastSyncMessageId = targetMsg.id;
+  saveTelegramConfig(cfg);
+
+  return { db: parsed, messageId: targetMsg.id };
 }
 
 /**
