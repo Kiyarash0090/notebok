@@ -14,6 +14,7 @@ import {
   Star,
   Shapes,
   Plus,
+  X,
 } from 'lucide-react';
 import { NoteAttachment, NoteBlock, ShapeConfig, ShapeKind } from '../../types';
 import {
@@ -25,6 +26,18 @@ import {
   getBlockShapes,
 } from '../../lib/blocks';
 import { MATH_SNIPPET_GROUPS } from '../../lib/mathSnippets';
+
+const FAMOUS_FORMULAS = [
+  { label: 'معادله درجه دو', latex: 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}' },
+  { label: 'قضیه فیثاغورس', latex: 'a^2 + b^2 = c^2' },
+  { label: 'تعریف مشتق', latex: "f'(x) = \\lim_{h \\to 0} \\frac{f(x+h) - f(x)}{h}" },
+  { label: 'انتگرال معین', latex: '\\int_{a}^{b} f(x)\\,dx = F(b) - F(a)' },
+  { label: 'قانون دوم نیوتن', latex: '\\vec{F} = m \\vec{a}' },
+  { label: 'هم‌ارزی جرم و انرژی', latex: 'E = m c^2' },
+  { label: 'اتحاد اویلر', latex: 'e^{i\\pi} + 1 = 0' },
+  { label: 'معادله دایره', latex: '(x - h)^2 + (y - k)^2 = r^2' },
+  { label: 'توزیع نرمال', latex: 'f(x) = \\frac{1}{\\sigma \\sqrt{2\\pi}} e^{-\\frac{1}{2}\\left(\\frac{x-\\mu}{\\sigma}\\right)^2}' },
+];
 import { MathRenderer } from '../MathRenderer';
 import { MediaFrame } from '../blocks/MediaFrame';
 import { ShapeSvg } from '../blocks/ShapeSvg';
@@ -70,6 +83,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
 }) => {
   const [dragging, setDragging] = useState(false);
   const [mathPaletteOpen, setMathPaletteOpen] = useState(false);
+  const [mathCategory, setMathCategory] = useState<number>(0);
   const [newShapeModalOpen, setNewShapeModalOpen] = useState(false);
   const mathAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const dragTouchY = useRef<number | null>(null);
@@ -108,28 +122,42 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
     });
   };
 
-  const textArea = (placeholder: string, rows = 1) => (
-    <textarea
-      value={block.text}
-      placeholder={placeholder}
-      rows={rows}
-      dir="auto"
-      data-block-id={block.id}
-      onChange={(e) => onUpdate(block.id, { text: e.target.value })}
-      onKeyDown={(e) => {
-        const atEnd = e.currentTarget.selectionStart === e.currentTarget.value.length;
-        if (e.key === 'Enter' && !e.shiftKey && atEnd) {
-          e.preventDefault();
-          commandExecutor(block.id, 'insert_after');
-        } else if (e.key === 'Backspace' && e.currentTarget.value === '' && e.currentTarget.selectionStart === 0) {
-          e.preventDefault();
-          commandExecutor(block.id, 'merge_up');
-        }
-      }}
-      className="w-full bg-transparent resize-none outline-none placeholder:text-[#8F9285] field-sizing-content"
-      style={{ minHeight: '1.75em' }}
-    />
-  );
+  const textArea = (placeholder: string, rows = 1) => {
+    const lineCount = (block.text || '').split('\n').length;
+    return (
+      <textarea
+        value={block.text}
+        placeholder={placeholder}
+        rows={Math.max(rows, lineCount)}
+        dir="auto"
+        data-block-id={block.id}
+        onChange={(e) => onUpdate(block.id, { text: e.target.value })}
+        onInput={(e) => {
+          const target = e.currentTarget;
+          target.style.height = 'auto';
+          target.style.height = `${target.scrollHeight}px`;
+        }}
+        ref={(el) => {
+          if (el) {
+            el.style.height = 'auto';
+            el.style.height = `${el.scrollHeight}px`;
+          }
+        }}
+        onKeyDown={(e) => {
+          // Ctrl/Cmd + Enter inserts a new block after this one
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            commandExecutor(block.id, 'insert_after');
+          } else if (e.key === 'Backspace' && e.currentTarget.value === '' && e.currentTarget.selectionStart === 0) {
+            e.preventDefault();
+            commandExecutor(block.id, 'merge_up');
+          }
+        }}
+        className="w-full bg-transparent resize-none outline-none placeholder:text-[#8F9285] field-sizing-content leading-relaxed overflow-hidden"
+        style={{ minHeight: `${rows * 1.75}em` }}
+      />
+    );
+  };
 
   const renderBody = () => {
     switch (block.type) {
@@ -198,9 +226,19 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
               <textarea
                 value={block.text}
                 placeholder="// کد خود را اینجا وارد کنید..."
-                rows={3}
+                rows={Math.max(3, (block.text || '').split('\n').length)}
                 onChange={(e) => onUpdate(block.id, { text: e.target.value })}
-                className="w-full bg-transparent resize-none outline-none font-mono text-[#E2E3DC] placeholder:text-[#8F9285]"
+                onInput={(e) => {
+                  e.currentTarget.style.height = 'auto';
+                  e.currentTarget.style.height = `${Math.max(72, e.currentTarget.scrollHeight)}px`;
+                }}
+                ref={(el) => {
+                  if (el) {
+                    el.style.height = 'auto';
+                    el.style.height = `${Math.max(72, el.scrollHeight)}px`;
+                  }
+                }}
+                className="w-full bg-transparent resize-none outline-none font-mono text-[#E2E3DC] placeholder:text-[#8F9285] leading-relaxed overflow-hidden"
               />
             </div>
             {hasShapes && (
@@ -215,17 +253,158 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
       case 'math':
         return (
           <div className="space-y-2">
-            <div className="p-3 rounded-2xl bg-[#FAF2DE] dark:bg-[#1C1C17] border border-[#E1E4D5] dark:border-[#43493E]" dir="ltr">
-              <textarea
-                ref={mathAreaRef}
-                value={block.text}
-                placeholder="x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}"
-                rows={2}
-                onChange={(e) => onUpdate(block.id, { text: e.target.value })}
-                className="w-full bg-transparent resize-none outline-none font-mono text-xs text-[#1A1C16] dark:text-[#E2E3DC] placeholder:text-[#8F9285]"
-              />
+            <div className="p-3 rounded-2xl bg-[#FAF2DE] dark:bg-[#1C1C17] border border-[#E1E4D5] dark:border-[#43493E]">
+              {/* Header with title and toggle button */}
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#E1E4D5]/80 dark:border-[#43493E]/80 gap-2 flex-wrap" dir="rtl">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[#4A6D22] dark:text-[#D0E8B2]">
+                  <Sigma className="w-4 h-4 shrink-0" />
+                  <span>فرمول ریاضی (LaTeX)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMathPaletteOpen((prev) => !prev)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs active:scale-95 touch-manipulation cursor-pointer ${
+                    mathPaletteOpen
+                      ? 'bg-[#4A6D22] text-white dark:bg-[#D0E8B2] dark:text-[#1A3700]'
+                      : 'bg-white dark:bg-[#23261F] text-[#4A6D22] dark:text-[#D0E8B2] hover:bg-[#D0E8B2]/30 dark:hover:bg-[#324B10]/40 border border-[#E1E4D5] dark:border-[#43493E]'
+                  }`}
+                  title="نمایش و درج فرمول‌ها و نمادهای آماده"
+                >
+                  <Sigma className="w-3.5 h-3.5" />
+                  <span>{mathPaletteOpen ? 'بستن فرمول‌های آماده' : 'فرمول‌های آماده'}</span>
+                </button>
+              </div>
+
+              {/* Math Snippets & Formulas Palette */}
+              {mathPaletteOpen && (
+                <div className="mb-3 p-2.5 rounded-xl bg-white/95 dark:bg-[#12140E]/95 border border-[#E1E4D5] dark:border-[#43493E] shadow-sm space-y-2.5" dir="rtl">
+                  <div className="flex items-center justify-between gap-1">
+                    {/* Category tabs */}
+                    <div className="flex items-center gap-1 overflow-x-auto pb-0.5 max-w-[calc(100%-28px)] text-xs">
+                      {['قالب‌های پرکاربرد', 'فرمول‌های معروف', 'ماتریس و دستگاه', 'نمادها و یونانی'].map((catName, cIdx) => (
+                        <button
+                          key={catName}
+                          type="button"
+                          onClick={() => setMathCategory(cIdx)}
+                          className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap text-[11px] transition-all cursor-pointer ${
+                            mathCategory === cIdx
+                              ? 'bg-[#4A6D22] text-white dark:bg-[#D0E8B2] dark:text-[#1A3700] font-bold shadow-xs'
+                              : 'bg-black/5 dark:bg-white/5 text-[#5E6258] dark:text-[#8F9285] hover:bg-black/10 dark:hover:bg-white/10'
+                          }`}
+                        >
+                          {catName}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMathPaletteOpen(false)}
+                      className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-[#8F9285] cursor-pointer"
+                      title="بستن"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Items list per category */}
+                  <div className="max-h-52 overflow-y-auto pr-0.5 space-y-1.5">
+                    {mathCategory === 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {MATH_SNIPPET_GROUPS[0].items.map((item) => (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onClick={() => insertMathSnippet(item.latex)}
+                            className="px-2.5 py-1.5 rounded-lg bg-[#FAF2DE] dark:bg-[#1C1C17] hover:bg-[#D0E8B2] hover:text-[#1A3700] dark:hover:bg-[#324B10] dark:hover:text-[#D0E8B2] border border-[#E1E4D5] dark:border-[#43493E] text-xs text-[#1A1C16] dark:text-[#E2E3DC] transition-colors active:scale-95 cursor-pointer font-medium"
+                            title={item.latex}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {mathCategory === 1 && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {FAMOUS_FORMULAS.map((item) => (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onClick={() => insertMathSnippet(item.latex)}
+                            className="p-2 rounded-lg bg-[#FAF2DE] dark:bg-[#1C1C17] hover:bg-[#D0E8B2]/60 dark:hover:bg-[#324B10] border border-[#E1E4D5] dark:border-[#43493E] text-right transition-colors active:scale-98 flex flex-col gap-0.5 cursor-pointer"
+                          >
+                            <span className="text-[11px] font-bold text-[#4A6D22] dark:text-[#D0E8B2]">{item.label}</span>
+                            <span className="text-[11px] font-mono text-[#5E6258] dark:text-[#8F9285] truncate text-left" dir="ltr">
+                              {item.latex}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {mathCategory === 2 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {MATH_SNIPPET_GROUPS[1].items.map((item) => (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onClick={() => insertMathSnippet(item.latex)}
+                            className="px-2.5 py-1.5 rounded-lg bg-[#FAF2DE] dark:bg-[#1C1C17] hover:bg-[#D0E8B2] hover:text-[#1A3700] dark:hover:bg-[#324B10] dark:hover:text-[#D0E8B2] border border-[#E1E4D5] dark:border-[#43493E] text-xs text-[#1A1C16] dark:text-[#E2E3DC] transition-colors active:scale-95 cursor-pointer font-medium"
+                            title={item.latex}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {mathCategory === 3 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {MATH_SNIPPET_GROUPS[2].items.map((item) => (
+                          <button
+                            key={item.label + item.latex}
+                            type="button"
+                            onClick={() => insertMathSnippet(item.latex)}
+                            className="px-2 py-1 rounded-lg bg-[#FAF2DE] dark:bg-[#1C1C17] hover:bg-[#D0E8B2] hover:text-[#1A3700] dark:hover:bg-[#324B10] dark:hover:text-[#D0E8B2] border border-[#E1E4D5] dark:border-[#43493E] text-xs text-[#1A1C16] dark:text-[#E2E3DC] transition-colors active:scale-95 cursor-pointer flex items-center gap-1"
+                            title={item.latex}
+                          >
+                            {item.display ? (
+                              <span className="font-bold text-sm text-[#4A6D22] dark:text-[#D0E8B2]">{item.display}</span>
+                            ) : null}
+                            <span className="text-[10px] text-[#5E6258] dark:text-[#8F9285]">{item.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Textarea for math formula */}
+              <div dir="ltr">
+                <textarea
+                  ref={(el) => {
+                    mathAreaRef.current = el;
+                    if (el) {
+                      el.style.height = 'auto';
+                      el.style.height = `${Math.max(48, el.scrollHeight)}px`;
+                    }
+                  }}
+                  value={block.text}
+                  placeholder="x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}"
+                  rows={Math.max(2, (block.text || '').split('\n').length)}
+                  onChange={(e) => onUpdate(block.id, { text: e.target.value })}
+                  onInput={(e) => {
+                    e.currentTarget.style.height = 'auto';
+                    e.currentTarget.style.height = `${Math.max(48, e.currentTarget.scrollHeight)}px`;
+                  }}
+                  className="w-full bg-transparent resize-none outline-none font-mono text-xs sm:text-sm text-[#1A1C16] dark:text-[#E2E3DC] placeholder:text-[#8F9285] leading-relaxed overflow-hidden field-sizing-content"
+                  style={{ minHeight: '3rem' }}
+                />
+              </div>
+
               {block.text && (
-                <div className="mt-2 pt-2 border-t border-[#E1E4D5] dark:border-[#43493E] overflow-x-auto text-center">
+                <div className="mt-2 pt-2 border-t border-[#E1E4D5] dark:border-[#43493E] overflow-x-auto text-center" dir="ltr">
                   <MathRenderer text={`$$${block.text}$$`} />
                 </div>
               )}
@@ -263,12 +442,22 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                   width={block.width}
                   onZoom={attachment.type === 'image' ? onZoomImage : undefined}
                 />
-                <input
-                  type="text"
+                <textarea
                   value={block.caption || ''}
                   placeholder="توضیح زیر تصویر یا رسانه (اختیاری)..."
+                  rows={Math.max(1, (block.caption || '').split('\n').length)}
                   onChange={(e) => onUpdate(block.id, { caption: e.target.value })}
-                  className="w-full text-center text-xs text-[#5E6258] dark:text-[#8F9285] bg-transparent outline-none border-b border-transparent focus:border-[#4A6D22]/40 pb-0.5"
+                  onInput={(e) => {
+                    e.currentTarget.style.height = 'auto';
+                    e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`;
+                  }}
+                  ref={(el) => {
+                    if (el) {
+                      el.style.height = 'auto';
+                      el.style.height = `${el.scrollHeight}px`;
+                    }
+                  }}
+                  className="w-full text-center text-xs text-[#5E6258] dark:text-[#8F9285] bg-transparent outline-none border-b border-transparent focus:border-[#4A6D22]/40 pb-0.5 resize-none overflow-hidden"
                 />
               </div>
             ) : (
@@ -294,7 +483,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
         return (
           <div className="space-y-2">
             <div className="p-3 rounded-2xl bg-[#F5F6EE] dark:bg-[#1C1C17] border border-[#E1E4D5] dark:border-[#43493E] space-y-1.5">
-              {items.map((item) => (
+              {items.map((item, idx) => (
                 <div key={item.id} className="flex items-center gap-2 group/chk">
                   <input
                     type="checkbox"
@@ -308,6 +497,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                   />
                   <input
                     type="text"
+                    data-check-item={item.id}
                     value={item.text}
                     placeholder="مورد چک‌لیست..."
                     onChange={(e) =>
@@ -315,6 +505,30 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                         items: items.map((i) => (i.id === item.id ? { ...i, text: e.target.value } : i)),
                       })
                     }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const newItemId = `chk-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                        const newItem = { id: newItemId, text: '', done: false };
+                        const nextItems = [...items];
+                        nextItems.splice(idx + 1, 0, newItem);
+                        onUpdate(block.id, { items: nextItems });
+                        setTimeout(() => {
+                          const nextInput = document.querySelector<HTMLInputElement>(`[data-check-item="${newItemId}"]`);
+                          nextInput?.focus();
+                        }, 40);
+                      } else if (e.key === 'Backspace' && item.text === '' && items.length > 1) {
+                        e.preventDefault();
+                        const prevItem = items[idx - 1];
+                        onUpdate(block.id, { items: items.filter((i) => i.id !== item.id) });
+                        if (prevItem) {
+                          setTimeout(() => {
+                            const prevInput = document.querySelector<HTMLInputElement>(`[data-check-item="${prevItem.id}"]`);
+                            prevInput?.focus();
+                          }, 40);
+                        }
+                      }
+                    }}
                     className={`flex-1 bg-transparent text-xs outline-none ${
                       item.done ? 'line-through text-[#8F9285]' : 'text-[#1A1C16] dark:text-[#E2E3DC]'
                     }`}
@@ -540,6 +754,21 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
               </button>
             ))}
           </div>
+        )}
+        {block.type === 'math' && (
+          <button
+            type="button"
+            onClick={() => setMathPaletteOpen((prev) => !prev)}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[9px] font-bold transition-colors cursor-pointer ${
+              mathPaletteOpen
+                ? 'bg-[#4A6D22] text-white dark:bg-[#D0E8B2] dark:text-[#1A3700]'
+                : 'bg-black/5 dark:bg-white/5 text-[#4A6D22] dark:text-[#D0E8B2] hover:bg-[#D0E8B2] hover:text-[#1A3700]'
+            }`}
+            title="فرمول‌ها و نمادهای آماده"
+          >
+            <Sigma className="w-3 h-3" />
+            <span>{mathPaletteOpen ? 'بستن فرمول‌ها' : 'فرمول‌های آماده'}</span>
+          </button>
         )}
         <span className="hidden sm:inline mr-auto text-[9px] text-[#8F9285]">⌘/Ctrl+Enter برای افزودن بلوک بعدی</span>
       </div>

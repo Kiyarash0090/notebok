@@ -1098,9 +1098,18 @@ app.get('/api/categories', (req, res) => {
 
 app.post('/api/categories', (req, res) => {
   const db = readDB();
-  const { name, color, icon, description } = req.body;
+  const { name, color, icon, description, parentId } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ success: false, error: 'نام دسته‌بندی الزامی است' });
+  }
+
+  // Validate parentId if provided
+  let validParentId: string | null = null;
+  if (parentId && typeof parentId === 'string' && parentId.trim()) {
+    const parentExists = db.categories.some((c) => c.id === parentId.trim());
+    if (parentExists) {
+      validParentId = parentId.trim();
+    }
   }
 
   const newCat = {
@@ -1109,6 +1118,7 @@ app.post('/api/categories', (req, res) => {
     color: color || '#1a73e8',
     icon: icon || 'Folder',
     description: description || '',
+    parentId: validParentId,
     createdAt: new Date().toISOString(),
   };
 
@@ -1120,16 +1130,47 @@ app.post('/api/categories', (req, res) => {
 
 app.put('/api/categories/:id', (req, res) => {
   const db = readDB();
-  const index = db.categories.findIndex((c) => c.id === req.params.id);
+  const targetId = req.params.id;
+  const index = db.categories.findIndex((c) => c.id === targetId);
   if (index === -1) return res.status(404).json({ success: false, error: 'دسته‌بندی یافت نشد' });
 
-  const { name, color, icon, description } = req.body;
+  const { name, color, icon, description, parentId } = req.body;
+
+  // Cycle detection: helper to get all descendants of targetId
+  const getDescendantIds = (catId: string): string[] => {
+    const directChildren = db.categories.filter((c) => c.parentId === catId).map((c) => c.id);
+    return directChildren.reduce<string[]>((acc, childId) => {
+      return [...acc, childId, ...getDescendantIds(childId)];
+    }, []);
+  };
+
+  let newParentId: string | null = db.categories[index].parentId || null;
+  if (parentId !== undefined) {
+    if (parentId === null || parentId === '' || parentId === 'none') {
+      newParentId = null;
+    } else if (typeof parentId === 'string') {
+      const cleanParentId = parentId.trim();
+      if (cleanParentId === targetId) {
+        return res.status(400).json({ success: false, error: 'یک دسته‌بندی نمی‌تواند زیرمجموعه خودش باشد' });
+      }
+      const descendants = getDescendantIds(targetId);
+      if (descendants.includes(cleanParentId)) {
+        return res.status(400).json({ success: false, error: 'نمی‌توانید دسته را به یکی از زیرمجموعه‌های خودش منتقل کنید' });
+      }
+      const parentExists = db.categories.some((c) => c.id === cleanParentId);
+      if (parentExists) {
+        newParentId = cleanParentId;
+      }
+    }
+  }
+
   db.categories[index] = {
     ...db.categories[index],
     name: name ? name.trim() : db.categories[index].name,
     color: color || db.categories[index].color,
     icon: icon || db.categories[index].icon,
     description: description !== undefined ? description : db.categories[index].description,
+    parentId: newParentId,
   };
 
   writeDB(db);
@@ -1142,16 +1183,28 @@ app.delete('/api/categories/:id', (req, res) => {
   const index = db.categories.findIndex((c) => c.id === catId);
   if (index === -1) return res.status(404).json({ success: false, error: 'دسته‌بندی یافت نشد' });
 
-  db.categories.splice(index, 1);
+  // Find all recursive descendant category IDs
+  const getDescendantIds = (id: string): string[] => {
+    const directChildren = db.categories.filter((c) => c.parentId === id).map((c) => c.id);
+    return directChildren.reduce<string[]>((acc, childId) => {
+      return [...acc, childId, ...getDescendantIds(childId)];
+    }, []);
+  };
+
+  const allIdsToRemove = new Set<string>([catId, ...getDescendantIds(catId)]);
+
+  // Remove target category and all subcategories
+  db.categories = db.categories.filter((c) => !allIdsToRemove.has(c.id));
+
   // Unset categoryId from associated notes
   db.notes.forEach((n) => {
-    if (n.categoryId === catId) {
+    if (n.categoryId && allIdsToRemove.has(n.categoryId)) {
       n.categoryId = '';
     }
   });
 
   writeDB(db);
-  res.json({ success: true, message: 'دسته‌بندی با موفقیت حذف شد' });
+  res.json({ success: true, message: 'دسته‌بندی و زیرمجموعه‌های آن با موفقیت حذف شدند', removedIds: Array.from(allIdsToRemove) });
 });
 
 // ==========================================

@@ -27,6 +27,7 @@ import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { AdvancedSearchModal, AdvancedSearchFilters } from './components/AdvancedSearchModal';
 import { TelegramModal } from './components/TelegramModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { getCategoryDescendantIds, getCategoryPathString } from './lib/categoryUtils';
 
 export default function App() {
   // Theme state
@@ -144,13 +145,31 @@ export default function App() {
   const handleDownloadPdf = useCallback((note: Note) => {
     setPrintNote(note);
   }, []);
+
   useEffect(() => {
     if (!printNote) return;
+
+    let didCleanup = false;
+    const cleanup = () => {
+      if (didCleanup) return;
+      didCleanup = true;
+      setPrintNote(null);
+      window.removeEventListener('afterprint', cleanup);
+    };
+
+    window.addEventListener('afterprint', cleanup);
+
+    // Give browser time to settle DOM, KaTeX, images, and layout styles
     const t = setTimeout(() => {
       window.print();
-      setPrintNote(null);
-    }, 200);
-    return () => clearTimeout(t);
+      // Fallback timer for browsers that don't fire afterprint
+      setTimeout(cleanup, 2500);
+    }, 350);
+
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('afterprint', cleanup);
+    };
   }, [printNote]);
 
   // Toast notification state
@@ -245,13 +264,15 @@ export default function App() {
       } else if (currentFilter === 'checklists') {
         result = result.filter((n) => n.checklists && n.checklists.length > 0);
       } else if (currentFilter === 'category' && selectedCategory) {
-        result = result.filter((n) => n.categoryId === selectedCategory);
+        const matchingCategoryIds = new Set(getCategoryDescendantIds(selectedCategory, categories));
+        result = result.filter((n) => n.categoryId && matchingCategoryIds.has(n.categoryId));
       }
     }
 
     // Apply Advanced Filter Criteria
     if (advancedFilters.category && advancedFilters.category !== 'all') {
-      result = result.filter((n) => n.categoryId === advancedFilters.category);
+      const matchingCategoryIds = new Set(getCategoryDescendantIds(advancedFilters.category, categories));
+      result = result.filter((n) => n.categoryId && matchingCategoryIds.has(n.categoryId));
     }
 
     if (advancedFilters.tag) {
@@ -460,8 +481,8 @@ export default function App() {
     if (currentFilter === 'archive') return 'بایگانی یادداشت‌ها';
     if (currentFilter === 'trash') return 'سطل زباله';
     if (currentFilter === 'category' && selectedCategory) {
-      const cat = categories.find((c) => c.id === selectedCategory);
-      return cat ? `دسته‌بندی: ${cat.name}` : 'دسته‌بندی موضوعی';
+      const pathStr = getCategoryPathString(selectedCategory, categories);
+      return pathStr ? `دسته‌بندی: ${pathStr}` : 'دسته‌بندی موضوعی';
     }
     return 'همه جزوه‌ها و یادداشت‌ها';
   }, [currentFilter, selectedCategory, categories, searchQuery]);
@@ -749,6 +770,7 @@ export default function App() {
         onDelete={(id, permanent) => handleDeleteNote(id, permanent ?? false)}
         isTrashView={currentFilter === 'trash'}
         onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
+        onDownloadPdf={handleDownloadPdf}
       />
 
       {/* Category Manager Modal */}

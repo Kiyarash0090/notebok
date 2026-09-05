@@ -17,6 +17,7 @@ interface BlockRendererProps {
   // Compact media rows — used on note cards so attachment files read as light
   // rows beside boxed sections like the checklist.
   compact?: boolean;
+  isPrint?: boolean;
 }
 
 const HEADING_CLASS: Record<number, string> = {
@@ -31,6 +32,7 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
   clampHeight,
   onToggleChecklistItem,
   compact = false,
+  isPrint = false,
 }) => {
   const [zoomed, setZoomed] = useState<string | null>(null);
   const attachmentMap = new Map(attachments.map((a) => [a.id, a]));
@@ -44,8 +46,8 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
         const level = block.level || 2;
         return (
           <div key={block.id} className="block-wrapper">
-            <div className={`${HEADING_CLASS[level]} text-[#1A1C16] dark:text-[#E2E3DC] pt-1`}>
-              <InlineText text={block.text} />
+            <div className={`${HEADING_CLASS[level]} ${isPrint ? 'text-[#1A1C16]' : 'text-[#1A1C16] dark:text-[#E2E3DC]'} pt-1`}>
+              <InlineText text={block.text} isPrint={isPrint} />
             </div>
             {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
           </div>
@@ -56,9 +58,21 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
         return (
           <div key={block.id} className="block-wrapper">
             <blockquote
-              className="border-r-3 border-[#D0E8B2] dark:border-[#4A6D22] pr-3 py-0.5 text-xs sm:text-sm italic text-[#3F4A35] dark:text-[#BCC2B2] whitespace-pre-wrap"
+              className={`border-r-3 ${
+                isPrint
+                  ? 'border-[#4A6D22] text-[#2C3327] bg-[#F8FAF5] pr-3 py-1.5'
+                  : 'border-[#D0E8B2] dark:border-[#4A6D22] pr-3 py-0.5 text-[#3F4A35] dark:text-[#BCC2B2]'
+              } text-xs sm:text-sm italic whitespace-pre-wrap`}
+              style={
+                isPrint
+                  ? {
+                      WebkitPrintColorAdjust: 'exact',
+                      printColorAdjust: 'exact',
+                    }
+                  : undefined
+              }
             >
-              <InlineText text={block.text} />
+              <InlineText text={block.text} isPrint={isPrint} />
             </blockquote>
             {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
           </div>
@@ -69,11 +83,19 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
         return (
           <div key={block.id} className="block-wrapper">
             <div
-              className={`flex gap-2.5 items-start p-3 rounded-2xl border ${style.light} ${style.dark} text-xs sm:text-sm`}
+              className={`flex gap-2.5 items-start p-3 rounded-2xl border ${style.light} ${isPrint ? '' : style.dark} text-xs sm:text-sm`}
+              style={
+                isPrint
+                  ? {
+                      WebkitPrintColorAdjust: 'exact',
+                      printColorAdjust: 'exact',
+                    }
+                  : undefined
+              }
             >
               <span className="flex items-center pt-0.5"><style.icon className="w-4 h-4" /></span>
               <div className={`min-w-0 flex-1 leading-relaxed whitespace-pre-wrap ${style.text}`}>
-                <InlineText text={block.text} />
+                <InlineText text={block.text} isPrint={isPrint} />
               </div>
             </div>
             {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
@@ -86,9 +108,26 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
           <div key={block.id} className="block-wrapper">
             <pre
               dir="ltr"
-              className="p-3 rounded-2xl bg-[#1C1C17] dark:bg-[#0F110C] text-[#E2E3DC] text-[11px] sm:text-xs overflow-x-auto border border-[#43493E] font-mono leading-relaxed"
+              className={`p-3 rounded-2xl ${
+                isPrint
+                  ? 'bg-[#F8FAFC] text-[#0F172A] border-[#CBD5E1]'
+                  : 'bg-[#1C1C17] dark:bg-[#0F110C] text-[#E2E3DC] border-[#43493E]'
+              } text-[11px] sm:text-xs overflow-x-auto border font-mono leading-relaxed print:bg-[#F8FAFC] print:text-[#0F172A] print:border-[#CBD5E1]`}
+              style={
+                isPrint
+                  ? {
+                      backgroundColor: '#F8FAFC',
+                      color: '#0F172A',
+                      borderColor: '#CBD5E1',
+                      WebkitPrintColorAdjust: 'exact',
+                      printColorAdjust: 'exact',
+                      pageBreakInside: 'avoid',
+                      breakInside: 'avoid',
+                    }
+                  : undefined
+              }
             >
-              <code>{block.text}</code>
+              <code style={isPrint ? { color: '#0F172A', background: 'transparent' } : undefined}>{block.text}</code>
             </pre>
             {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
           </div>
@@ -190,10 +229,12 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                     className={
                       item.done
                         ? 'line-through text-[#8F9285]'
+                        : isPrint
+                        ? 'text-[#1A1C16]'
                         : 'text-[#1A1C16] dark:text-[#E2E3DC] group-hover/chk:text-[#4A6D22] dark:group-hover/chk:text-[#D0E8B2]'
                     }
                   >
-                    <InlineText text={item.text || '—'} />
+                    <InlineText text={item.text || '—'} isPrint={isPrint} />
                   </span>
                 </button>
               ))}
@@ -209,7 +250,7 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
         const cells = t.cells || [];
         return (
           <div key={block.id} className="block-wrapper space-y-2">
-            <div className="overflow-x-auto rounded-2xl border border-[#E1E4D5] dark:border-[#43493E]">
+            <div className={`overflow-x-auto rounded-2xl border ${isPrint ? 'border-[#CBD5E1]' : 'border-[#E1E4D5] dark:border-[#43493E]'}`}>
               <table className="border-collapse w-full text-xs sm:text-sm">
                 <tbody>
                   {Array.from({ length: t.rows }, (_, r) => (
@@ -220,11 +261,12 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                         return (
                           <td
                             key={c}
-                            className={`border border-[#E1E4D5] dark:border-[#43493E] px-2 py-1.5 align-top ${
-                              color ? `${color.light} ${color.dark}` : ''
-                            } ${t.header && r === 0 ? 'bg-black/[0.04] dark:bg-white/[0.06] font-bold' : ''}`}
+                            className={`border ${isPrint ? 'border-[#CBD5E1] text-[#1A1C16]' : 'border-[#E1E4D5] dark:border-[#43493E]'} px-2 py-1.5 align-top ${
+                              color ? `${color.light} ${isPrint ? '' : color.dark}` : ''
+                            } ${t.header && r === 0 ? (isPrint ? 'bg-[#F1F5F9] font-bold text-[#0F172A]' : 'bg-black/[0.04] dark:bg-white/[0.06] font-bold') : ''}`}
+                            style={isPrint ? { WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' } : undefined}
                           >
-                            <InlineText text={cell.text} />
+                            <InlineText text={cell.text} isPrint={isPrint} />
                           </td>
                         );
                       })}
@@ -254,8 +296,8 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
           <div key={block.id} className="block-wrapper space-y-1">
             <BlockShapesContainer block={block} compact={compact} />
             {block.text && (
-              <div className="text-xs text-[#24292F] dark:text-[#D1D5DB] pt-1">
-                <InlineText text={block.text} />
+              <div className={`text-xs ${isPrint ? 'text-[#1A1C16]' : 'text-[#24292F] dark:text-[#D1D5DB]'} pt-1`}>
+                <InlineText text={block.text} isPrint={isPrint} />
               </div>
             )}
           </div>
@@ -267,9 +309,11 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
             {/* Floated shapes if any */}
             {hasShapes && <BlockShapesContainer block={block} alignmentFilter="float" compact={compact} />}
             <div
-              className="text-xs sm:text-sm leading-[1.9] text-[#24292F] dark:text-[#D1D5DB] whitespace-pre-wrap"
+              className={`text-xs sm:text-sm leading-[1.9] ${
+                isPrint ? 'text-[#1A1C16]' : 'text-[#24292F] dark:text-[#D1D5DB]'
+              } whitespace-pre-wrap`}
             >
-              <InlineText text={block.text} />
+              <InlineText text={block.text} isPrint={isPrint} />
             </div>
             {/* Inline / block shapes */}
             {hasShapes && <BlockShapesContainer block={block} alignmentFilter="inline" compact={compact} />}

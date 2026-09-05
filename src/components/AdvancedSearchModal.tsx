@@ -12,6 +12,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { Category, ImportanceLevel } from '../types';
+import { getFlattenedCategoryTree } from '../lib/categoryUtils';
 
 export interface AdvancedSearchFilters {
   search: string;
@@ -138,10 +139,10 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
               onChange={(e) => setLocalFilters({ ...localFilters, category: e.target.value })}
               className="w-full bg-white dark:bg-[#12140E] border border-[#E1E4D5] dark:border-[#43493E] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm text-[#1A1C16] dark:text-[#E2E3DC] focus:outline-none focus:border-[#D0E8B2]"
             >
-              <option value="all">همه دسته‌ها</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
+              <option value="all">همه دسته‌ها و زیرمجموعه‌ها</option>
+              {getFlattenedCategoryTree(categories).map((opt) => (
+                <option key={opt.category.id} value={opt.category.id}>
+                  {'— '.repeat(opt.depth)} {opt.category.name}
                 </option>
               ))}
             </select>

@@ -12,6 +12,44 @@ interface ShapeSvgProps {
   height?: number | string;
 }
 
+const getShapeTextPadding = (kind: ShapeKind, strokeWidth: number): string => {
+  const basePad = Math.max(6, strokeWidth + 4);
+  switch (kind) {
+    case 'textbox':
+    case 'rect':
+    case 'roundedRect':
+      return `${basePad + 4}px ${basePad + 8}px`;
+    case 'circle':
+      return '14% 16%';
+    case 'diamond':
+      return '18% 22%';
+    case 'triangle':
+      return '28% 16% 12% 16%';
+    case 'hexagon':
+      return '10% 20%';
+    case 'arrow':
+      return '12% 34% 12% 16%';
+    case 'leftArrow':
+      return '12% 16% 12% 34%';
+    case 'doubleArrow':
+      return '12% 26%';
+    case 'line':
+      return '0 10%';
+    case 'star':
+      return '22% 20%';
+    case 'callout':
+      return `${basePad + 4}px ${basePad + 8}px ${basePad + 22}px ${basePad + 8}px`;
+    case 'cloud':
+      return '16% 16% 14% 16%';
+    case 'heart':
+      return '22% 18% 18% 18%';
+    case 'badge':
+      return '10% 18%';
+    default:
+      return `${basePad + 4}px ${basePad + 8}px`;
+  }
+};
+
 export const ShapeSvg: React.FC<ShapeSvgProps> = ({
   shape,
   kind: propKind,
@@ -310,296 +348,285 @@ export const ShapeSvg: React.FC<ShapeSvgProps> = ({
   if (kind === 'cloud') textCenterY = viewBoxHeight * 0.55;
 
   return (
-    <svg
-      viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
-      className={`select-none transition-transform ${className}`}
+    <div
+      className={`shape-svg-wrapper relative inline-block select-none overflow-visible max-w-full ${className}`}
       style={{
         width: typeof renderWidth === 'number' ? `${renderWidth}px` : renderWidth,
         height: typeof renderHeight === 'number' ? `${renderHeight}px` : renderHeight,
         maxWidth: '100%',
         maxHeight: '100%',
-        display: 'inline-block',
         verticalAlign: 'middle',
         opacity: normalizedOpacity,
         transform: rotation ? `rotate(${rotation}deg)` : undefined,
         transformOrigin: 'center center',
-        overflow: 'visible',
         ...style,
       }}
-      preserveAspectRatio="none"
-      aria-hidden="true"
     >
-      <defs>
-        {/* Two-color linear gradient */}
-        {isGradient && (
-          <linearGradient id={gradientId} x1={x1} y1={y1} x2={x2} y2={y2}>
-            <stop offset="0%" stopColor={rawStartColor} />
-            <stop offset="100%" stopColor={rawEndColor} />
-          </linearGradient>
-        )}
+      <svg
+        viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+        className="w-full h-full block"
+        style={{
+          overflow: 'visible',
+          width: '100%',
+          height: '100%',
+        }}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <defs>
+          {/* Two-color linear gradient */}
+          {isGradient && (
+            <linearGradient id={gradientId} x1={x1} y1={y1} x2={x2} y2={y2}>
+              <stop offset="0%" stopColor={rawStartColor} />
+              <stop offset="100%" stopColor={rawEndColor} />
+            </linearGradient>
+          )}
 
-        {/* 1. Soft Shadow filter */}
-        <filter id={`${filterId}-soft`} x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="3.5" stdDeviation="3.5" floodOpacity="0.22" floodColor="#000000" />
-        </filter>
+          {/* 1. Soft Shadow filter */}
+          <filter id={`${filterId}-soft`} x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="3.5" stdDeviation="3.5" floodOpacity="0.22" floodColor="#000000" />
+          </filter>
 
-        {/* 2. 3D Lighting Shadow filter */}
-        <filter id={`${filterId}-3d`} x="-25%" y="-25%" width="150%" height="160%">
-          <feDropShadow dx="3" dy="6" stdDeviation="2.5" floodOpacity="0.45" floodColor="#000000" />
-          <feDropShadow dx="-1" dy="-1" stdDeviation="1.2" floodOpacity="0.25" floodColor="#FFFFFF" />
-        </filter>
+          {/* 2. 3D Lighting Shadow filter */}
+          <filter id={`${filterId}-3d`} x="-25%" y="-25%" width="150%" height="160%">
+            <feDropShadow dx="3" dy="6" stdDeviation="2.5" floodOpacity="0.45" floodColor="#000000" />
+            <feDropShadow dx="-1" dy="-1" stdDeviation="1.2" floodOpacity="0.25" floodColor="#FFFFFF" />
+          </filter>
 
-        {/* 3. Deep Floating Shadow filter */}
-        <filter id={`${filterId}-deep`} x="-30%" y="-30%" width="160%" height="180%">
-          <feDropShadow dx="0" dy="12" stdDeviation="10" floodOpacity="0.35" floodColor="#000000" />
-          <feDropShadow dx="0" dy="4" stdDeviation="4" floodOpacity="0.22" floodColor="#000000" />
-        </filter>
+          {/* 3. Deep Floating Shadow filter */}
+          <filter id={`${filterId}-deep`} x="-30%" y="-30%" width="160%" height="180%">
+            <feDropShadow dx="0" dy="12" stdDeviation="10" floodOpacity="0.35" floodColor="#000000" />
+            <feDropShadow dx="0" dy="4" stdDeviation="4" floodOpacity="0.22" floodColor="#000000" />
+          </filter>
 
-        {/* 4. Neon Glow Shadow filter */}
-        <filter id={`${filterId}-glow`} x="-30%" y="-30%" width="160%" height="160%">
-          <feDropShadow
-            dx="0"
-            dy="0"
-            stdDeviation="6"
-            floodColor={rawStartColor !== 'transparent' ? rawStartColor : strokeColor}
-            floodOpacity="0.8"
-          />
-          <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.2" floodColor="#000000" />
-        </filter>
+          {/* 4. Neon Glow Shadow filter */}
+          <filter id={`${filterId}-glow`} x="-30%" y="-30%" width="160%" height="160%">
+            <feDropShadow
+              dx="0"
+              dy="0"
+              stdDeviation="6"
+              floodColor={rawStartColor !== 'transparent' ? rawStartColor : strokeColor}
+              floodOpacity="0.8"
+            />
+            <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.2" floodColor="#000000" />
+          </filter>
 
-        {/* 5. Pattern Definitions */}
-        {patternType === 'dots' && (
-          <pattern
-            id={patternId}
-            width={12 * patternScale}
-            height={12 * patternScale}
-            patternUnits="userSpaceOnUse"
-          >
-            {!isTransparent && (
-              <rect
-                width={12 * patternScale}
-                height={12 * patternScale}
-                fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+          {/* 5. Pattern Definitions */}
+          {patternType === 'dots' && (
+            <pattern
+              id={patternId}
+              width={12 * patternScale}
+              height={12 * patternScale}
+              patternUnits="userSpaceOnUse"
+            >
+              {!isTransparent && (
+                <rect
+                  width={12 * patternScale}
+                  height={12 * patternScale}
+                  fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+                />
+              )}
+              <circle
+                cx={6 * patternScale}
+                cy={6 * patternScale}
+                r={1.8 * patternScale}
+                fill={patternColor}
               />
-            )}
-            <circle
-              cx={6 * patternScale}
-              cy={6 * patternScale}
-              r={1.8 * patternScale}
-              fill={patternColor}
-            />
-          </pattern>
-        )}
+            </pattern>
+          )}
 
-        {patternType === 'grid' && (
-          <pattern
-            id={patternId}
-            width={16 * patternScale}
-            height={16 * patternScale}
-            patternUnits="userSpaceOnUse"
-          >
-            {!isTransparent && (
-              <rect
-                width={16 * patternScale}
-                height={16 * patternScale}
-                fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+          {patternType === 'grid' && (
+            <pattern
+              id={patternId}
+              width={16 * patternScale}
+              height={16 * patternScale}
+              patternUnits="userSpaceOnUse"
+            >
+              {!isTransparent && (
+                <rect
+                  width={16 * patternScale}
+                  height={16 * patternScale}
+                  fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+                />
+              )}
+              <path
+                d={`M ${16 * patternScale} 0 L 0 0 0 ${16 * patternScale}`}
+                fill="none"
+                stroke={patternColor}
+                strokeWidth={1.2 * patternScale}
               />
-            )}
-            <path
-              d={`M ${16 * patternScale} 0 L 0 0 0 ${16 * patternScale}`}
-              fill="none"
-              stroke={patternColor}
-              strokeWidth={1.2 * patternScale}
-            />
-          </pattern>
-        )}
+            </pattern>
+          )}
 
-        {patternType === 'stripes' && (
-          <pattern
-            id={patternId}
-            width={12 * patternScale}
-            height={12 * patternScale}
-            patternUnits="userSpaceOnUse"
-          >
-            {!isTransparent && (
-              <rect
-                width={12 * patternScale}
-                height={12 * patternScale}
-                fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+          {patternType === 'stripes' && (
+            <pattern
+              id={patternId}
+              width={12 * patternScale}
+              height={12 * patternScale}
+              patternUnits="userSpaceOnUse"
+            >
+              {!isTransparent && (
+                <rect
+                  width={12 * patternScale}
+                  height={12 * patternScale}
+                  fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+                />
+              )}
+              <line
+                x1="0"
+                y1={6 * patternScale}
+                x2={12 * patternScale}
+                y2={6 * patternScale}
+                stroke={patternColor}
+                strokeWidth={2.4 * patternScale}
               />
-            )}
-            <line
-              x1="0"
-              y1={6 * patternScale}
-              x2={12 * patternScale}
-              y2={6 * patternScale}
-              stroke={patternColor}
-              strokeWidth={2.4 * patternScale}
-            />
-          </pattern>
-        )}
+            </pattern>
+          )}
 
-        {patternType === 'stripes-diagonal' && (
-          <pattern
-            id={patternId}
-            width={14 * patternScale}
-            height={14 * patternScale}
-            patternUnits="userSpaceOnUse"
-          >
-            {!isTransparent && (
-              <rect
-                width={14 * patternScale}
-                height={14 * patternScale}
-                fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+          {patternType === 'stripes-diagonal' && (
+            <pattern
+              id={patternId}
+              width={14 * patternScale}
+              height={14 * patternScale}
+              patternUnits="userSpaceOnUse"
+            >
+              {!isTransparent && (
+                <rect
+                  width={14 * patternScale}
+                  height={14 * patternScale}
+                  fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+                />
+              )}
+              <path
+                d={`M -3,3 l 6,-6 M 0,${14 * patternScale} l ${14 * patternScale},-${14 * patternScale} M ${11 * patternScale},${17 * patternScale} l 6,-6`}
+                stroke={patternColor}
+                strokeWidth={1.8 * patternScale}
               />
-            )}
-            <path
-              d={`M -3,3 l 6,-6 M 0,${14 * patternScale} l ${14 * patternScale},-${14 * patternScale} M ${11 * patternScale},${17 * patternScale} l 6,-6`}
-              stroke={patternColor}
-              strokeWidth={1.8 * patternScale}
-            />
-          </pattern>
-        )}
+            </pattern>
+          )}
 
-        {patternType === 'crosshatch' && (
-          <pattern
-            id={patternId}
-            width={14 * patternScale}
-            height={14 * patternScale}
-            patternUnits="userSpaceOnUse"
-          >
-            {!isTransparent && (
-              <rect
-                width={14 * patternScale}
-                height={14 * patternScale}
-                fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+          {patternType === 'crosshatch' && (
+            <pattern
+              id={patternId}
+              width={14 * patternScale}
+              height={14 * patternScale}
+              patternUnits="userSpaceOnUse"
+            >
+              {!isTransparent && (
+                <rect
+                  width={14 * patternScale}
+                  height={14 * patternScale}
+                  fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+                />
+              )}
+              <path
+                d={`M 0 0 L ${14 * patternScale} ${14 * patternScale} M ${14 * patternScale} 0 L 0 ${14 * patternScale}`}
+                stroke={patternColor}
+                strokeWidth={1.4 * patternScale}
               />
-            )}
-            <path
-              d={`M 0 0 L ${14 * patternScale} ${14 * patternScale} M ${14 * patternScale} 0 L 0 ${14 * patternScale}`}
-              stroke={patternColor}
-              strokeWidth={1.4 * patternScale}
-            />
-          </pattern>
-        )}
+            </pattern>
+          )}
 
-        {patternType === 'blueprint' && (
-          <pattern
-            id={patternId}
-            width={20 * patternScale}
-            height={20 * patternScale}
-            patternUnits="userSpaceOnUse"
-          >
-            {!isTransparent && (
-              <rect
-                width={20 * patternScale}
-                height={20 * patternScale}
-                fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+          {patternType === 'blueprint' && (
+            <pattern
+              id={patternId}
+              width={20 * patternScale}
+              height={20 * patternScale}
+              patternUnits="userSpaceOnUse"
+            >
+              {!isTransparent && (
+                <rect
+                  width={20 * patternScale}
+                  height={20 * patternScale}
+                  fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+                />
+              )}
+              <path
+                d={`M ${20 * patternScale} 0 L 0 0 0 ${20 * patternScale}`}
+                fill="none"
+                stroke={patternColor}
+                strokeWidth={1.2 * patternScale}
+                opacity="0.8"
               />
-            )}
-            <path
-              d={`M ${20 * patternScale} 0 L 0 0 0 ${20 * patternScale}`}
-              fill="none"
-              stroke={patternColor}
-              strokeWidth={1.2 * patternScale}
-              opacity="0.8"
-            />
-            <path
-              d={`M ${10 * patternScale} 0 L ${10 * patternScale} ${20 * patternScale} M 0 ${10 * patternScale} L ${20 * patternScale} ${10 * patternScale}`}
-              fill="none"
-              stroke={patternColor}
-              strokeWidth={0.6 * patternScale}
-              strokeDasharray="2 2"
-              opacity="0.5"
-            />
-          </pattern>
-        )}
-
-        {patternType === 'waves' && (
-          <pattern
-            id={patternId}
-            width={20 * patternScale}
-            height={12 * patternScale}
-            patternUnits="userSpaceOnUse"
-          >
-            {!isTransparent && (
-              <rect
-                width={20 * patternScale}
-                height={12 * patternScale}
-                fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+              <path
+                d={`M ${10 * patternScale} 0 L ${10 * patternScale} ${20 * patternScale} M 0 ${10 * patternScale} L ${20 * patternScale} ${10 * patternScale}`}
+                fill="none"
+                stroke={patternColor}
+                strokeWidth={0.6 * patternScale}
+                strokeDasharray="2 2"
+                opacity="0.5"
               />
-            )}
-            <path
-              d={`M 0 ${6 * patternScale} Q ${5 * patternScale} 0, ${10 * patternScale} ${6 * patternScale} T ${20 * patternScale} ${6 * patternScale}`}
-              fill="none"
-              stroke={patternColor}
-              strokeWidth={1.6 * patternScale}
-            />
-          </pattern>
-        )}
-      </defs>
+            </pattern>
+          )}
 
-      {/* Shape vector path */}
-      {renderShapePath()}
+          {patternType === 'waves' && (
+            <pattern
+              id={patternId}
+              width={20 * patternScale}
+              height={12 * patternScale}
+              patternUnits="userSpaceOnUse"
+            >
+              {!isTransparent && (
+                <rect
+                  width={20 * patternScale}
+                  height={12 * patternScale}
+                  fill={isGradient ? `url(#${gradientId})` : rawStartColor}
+                />
+              )}
+              <path
+                d={`M 0 ${6 * patternScale} Q ${5 * patternScale} 0, ${10 * patternScale} ${6 * patternScale} T ${20 * patternScale} ${6 * patternScale}`}
+                fill="none"
+                stroke={patternColor}
+                strokeWidth={1.6 * patternScale}
+              />
+            </pattern>
+          )}
+        </defs>
 
-      {/* Optional embedded text (Word-like feature) */}
-      {innerText.trim() !== '' ? (
-        <text
-          x={
-            textAlign === 'right'
-              ? viewBoxWidth - pad - 12
-              : textAlign === 'left'
-              ? pad + 12
-              : viewBoxWidth / 2
-          }
-          y={textCenterY}
-          fill={textColor}
-          fontSize={textSize * 1.25}
-          fontWeight={isBold ? 'bold' : 'normal'}
-          fontFamily="system-ui, -apple-system, 'Vazirmatn', sans-serif"
-          textAnchor={textAlign === 'right' ? 'end' : textAlign === 'left' ? 'start' : 'middle'}
-          dominantBaseline="central"
-          direction={textAlign === 'left' ? 'ltr' : 'rtl'}
-          style={{ pointerEvents: 'none', userSelect: 'none' }}
+        {/* Shape vector path */}
+        {renderShapePath()}
+      </svg>
+
+      {/* Embedded text overlay (Word-like, wrapped, strictly bounded, never overflows) */}
+      {(innerText.trim() !== '' || kind === 'textbox') && (
+        <div
+          className="absolute inset-0 flex flex-col pointer-events-none"
+          style={{
+            padding: getShapeTextPadding(kind, strokeWidth),
+            justifyContent: 'center',
+            textAlign: textAlign,
+            direction: textAlign === 'left' ? 'ltr' : 'rtl',
+            boxSizing: 'border-box',
+          }}
         >
-          {(() => {
-            const lines = innerText.split('\n');
-            const lineH = textSize * 1.45;
-            const totalH = (lines.length - 1) * lineH;
-            return lines.map((line, idx) => (
-              <tspan
-                key={idx}
-                x={
-                  textAlign === 'right'
-                    ? viewBoxWidth - pad - 12
-                    : textAlign === 'left'
-                    ? pad + 12
-                    : viewBoxWidth / 2
-                }
-                dy={idx === 0 ? -(totalH / 2) : lineH}
-              >
-                {line}
-              </tspan>
-            ));
-          })()}
-        </text>
-      ) : (
-        kind === 'textbox' && (
-          <text
-            x={viewBoxWidth / 2}
-            y={textCenterY}
-            fill={textColor}
-            opacity={0.45}
-            fontSize={textSize * 1.05}
-            fontFamily="system-ui, -apple-system, 'Vazirmatn', sans-serif"
-            textAnchor="middle"
-            dominantBaseline="central"
-            style={{ pointerEvents: 'none', userSelect: 'none' }}
+          <div
+            className="w-full"
+            style={{
+              color: textColor,
+              fontSize: `${textSize}px`,
+              fontWeight: isBold ? 'bold' : 'normal',
+              lineHeight: 1.45,
+              wordBreak: 'break-word',
+              overflowWrap: 'anywhere',
+              whiteSpace: 'pre-wrap',
+              overflow: 'hidden',
+              maxHeight: '100%',
+              maxWidth: '100%',
+              fontFamily: "system-ui, -apple-system, 'Vazirmatn', sans-serif",
+            }}
           >
-            کادر متنی (برای نوشتن کلیک کنید)
-          </text>
-        )
+            {innerText.trim() !== '' ? (
+              innerText
+            ) : (
+              kind === 'textbox' && (
+                <span className="opacity-40 text-xs italic font-normal">
+                  کادر متنی (برای نوشتن کلیک کنید)
+                </span>
+              )
+            )}
+          </div>
+        </div>
       )}
-    </svg>
+    </div>
   );
 };

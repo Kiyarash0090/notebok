@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   BookOpen,
   Star,
@@ -15,10 +15,18 @@ import {
   AlertCircle,
   Hash,
   ChevronLeft,
+  ChevronDown,
   X,
   Send,
+  FolderOpen,
 } from 'lucide-react';
 import { Category, ViewFilter } from '../types';
+import {
+  buildCategoryTree,
+  CategoryTreeNode,
+  getTotalCategoryNoteCount,
+  getCategoryPath,
+} from '../lib/categoryUtils';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -70,6 +78,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
   counts,
   categoryCounts,
 }) => {
+  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
+
+  const categoryTree = useMemo(() => {
+    return buildCategoryTree(categories);
+  }, [categories]);
+
+  // Keep ancestors of active category expanded automatically
+  useEffect(() => {
+    if (selectedCategory && categories.length > 0) {
+      const activePath = getCategoryPath(selectedCategory, categories);
+      if (activePath.length > 0) {
+        setExpandedNodes((prev) => {
+          const next = { ...prev };
+          activePath.forEach((cat) => {
+            next[cat.id] = true;
+          });
+          return next;
+        });
+      }
+    }
+  }, [selectedCategory, categories]);
+
+  const toggleExpand = (catId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedNodes((prev) => ({
+      ...prev,
+      [catId]: prev[catId] === undefined ? false : !prev[catId],
+    }));
+  };
+
   const isSelected = (filter: ViewFilter, catId?: string) => {
     if (filter === 'category') {
       return currentFilter === 'category' && selectedCategory === catId;
@@ -78,15 +116,94 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const navItemClass = (active: boolean) =>
-    `w-full flex items-center justify-between px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-medium transition-all duration-150 ${
+    `w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm font-medium transition-all duration-150 ${
       active
         ? 'bg-[#D0E8B2] text-[#1A3700] font-bold shadow-xs'
         : 'text-[#43493E] dark:text-[#E2E3DC] hover:bg-[#EAECE2] dark:hover:bg-[#23261F]'
     }`;
 
+  // Recursive tree rendering for sidebar categories
+  const renderSidebarTreeItem = (node: CategoryTreeNode) => {
+    const cat = node.category;
+    const hasChildren = node.children.length > 0;
+    const isExpanded = expandedNodes[cat.id] ?? true; // Default expanded for great discoverability
+    const active = isSelected('category', cat.id);
+    const count = categoryCounts[cat.id] || 0;
+    const totalCount = getTotalCategoryNoteCount(cat.id, categories, categoryCounts);
+
+    return (
+      <div key={cat.id} className="space-y-0.5">
+        <div
+          className={`flex items-center gap-1 group rounded-2xl transition-all ${
+            active
+              ? 'bg-[#D0E8B2] text-[#1A3700] font-bold shadow-xs'
+              : 'hover:bg-[#EAECE2] dark:hover:bg-[#23261F] text-[#43493E] dark:text-[#E2E3DC]'
+          }`}
+          style={{ paddingRight: `${node.depth * 14}px` }}
+        >
+          {/* Expand/Collapse Toggle arrow */}
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(e) => toggleExpand(cat.id, e)}
+              className="p-1.5 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 text-[#5E6258] dark:text-[#8F9285] transition-transform"
+              title={isExpanded ? 'بستن زیرمجموعه‌ها' : 'باز کردن زیرمجموعه‌ها'}
+            >
+              {isExpanded ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronLeft className="w-3.5 h-3.5" />
+              )}
+            </button>
+          ) : (
+            <div className="w-6 shrink-0" />
+          )}
+
+          {/* Main Category Click Button */}
+          <button
+            id={`sidebar-cat-${cat.id}`}
+            onClick={() => {
+              onSelectFilter('category', cat.id);
+              onClose();
+            }}
+            className="flex-1 flex items-center justify-between py-2 pl-3 pr-0.5 text-xs sm:text-sm text-right truncate min-w-0"
+          >
+            <div className="flex items-center gap-2 truncate">
+              <div
+                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                style={{ backgroundColor: cat.color || '#4A6D22' }}
+              />
+              <span className="truncate">{cat.name}</span>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0 mr-1">
+              <span
+                className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${
+                  active
+                    ? 'bg-[#1A3700] text-[#D0E8B2]'
+                    : 'bg-[#E0E4D5] dark:bg-[#23261F] text-[#43493E] dark:text-[#8F9285]'
+                }`}
+                title={`${count} یادداشت مستقیم ${hasChildren ? `(${totalCount} با زیرمجموعه‌ها)` : ''}`}
+              >
+                {hasChildren ? totalCount : count}
+              </span>
+            </div>
+          </button>
+        </div>
+
+        {/* Render child subcategories recursively if expanded */}
+        {hasChildren && isExpanded && (
+          <div className="space-y-0.5 relative pr-1 border-r border-[#E1E4D5]/70 dark:border-[#33382E] mr-3">
+            {node.children.map((childNode) => renderSidebarTreeItem(childNode))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
-      {/* Backdrop (all sizes) — dims and click-closes the drawer */}
+      {/* Backdrop (all sizes) */}
       {isOpen && (
         <div
           className="fixed inset-0 z-[45] bg-black/50 backdrop-blur-xs transition-opacity anim-fade-in"
@@ -97,11 +214,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Drawer */}
       <aside
         id="app-sidebar"
-        className={`fixed top-16 bottom-0 right-0 z-50 w-64 bg-[#F5F6EE] dark:bg-[#1C1C17] border-l border-[#E1E4D5] dark:border-[#43493E] pt-3 pb-6 flex flex-col justify-between transition-transform duration-300 ease-in-out ${
+        className={`fixed top-16 bottom-0 right-0 z-50 w-72 bg-[#F5F6EE] dark:bg-[#1C1C17] border-l border-[#E1E4D5] dark:border-[#43493E] pt-3 pb-6 flex flex-col justify-between transition-transform duration-300 ease-in-out ${
           isOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'
         }`}
       >
-        <div className="flex-1 overflow-y-auto px-2 space-y-6">
+        <div className="flex-1 overflow-y-auto px-2 space-y-5">
           {/* Header */}
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#E1E4D5] dark:border-[#43493E] pb-3 mb-2">
             <div className="flex items-center gap-2">
@@ -120,7 +237,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
 
-          {/* Core Navigation Items */}
+          {/* Primary View Filters */}
           <div className="space-y-1">
             <button
               id="sidebar-all-notes"
@@ -131,8 +248,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className={navItemClass(isSelected('all'))}
             >
               <div className="flex items-center gap-3">
-                <BookOpen className={`w-4 h-4 shrink-0 ${isSelected('all') ? 'text-[#1A3700]' : 'text-[#5E6258] dark:text-[#8F9285]'}`} />
-                <span>همه جزوه‌ها و یادداشت‌ها</span>
+                <BookOpen className={`w-4 h-4 shrink-0 ${isSelected('all') ? 'text-[#1A3700]' : 'text-[#4A6D22] dark:text-[#D0E8B2]'}`} />
+                <span>همه یادداشت‌ها</span>
               </div>
               <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${isSelected('all') ? 'bg-[#1A3700] text-[#D0E8B2]' : 'bg-[#E0E4D5] dark:bg-[#23261F] text-[#43493E] dark:text-[#8F9285]'}`}>
                 {counts.all}
@@ -140,7 +257,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
 
             <button
-              id="sidebar-important-notes"
+              id="sidebar-important"
               onClick={() => {
                 onSelectFilter('important');
                 onClose();
@@ -174,11 +291,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
 
-          {/* Subjects / Categories Section */}
+          {/* Subjects / Categories Tree Section */}
           <div className="pt-2">
-            <div className="flex items-center justify-between px-4 pb-2">
+            <div className="flex items-center justify-between px-3 pb-2">
               <span className="text-[11px] font-bold tracking-wider text-[#5E6258] dark:text-[#8F9285] uppercase">
-                دسته‌بندی‌های موضوعی
+                دسته‌ها و زیرمجموعه‌ها
               </span>
               <button
                 id="btn-manage-categories"
@@ -190,36 +307,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             </div>
 
-            <div className="space-y-1">
-              {categories.map((cat) => {
-                const count = categoryCounts[cat.id] || 0;
-                const active = isSelected('category', cat.id);
-                return (
-                  <button
-                    key={cat.id}
-                    id={`sidebar-cat-${cat.id}`}
-                    onClick={() => {
-                      onSelectFilter('category', cat.id);
-                      onClose();
-                    }}
-                    className={navItemClass(active)}
-                  >
-                    <div className="flex items-center gap-3 truncate">
-                      <div
-                        className="w-3 h-3 rounded-full shrink-0 shadow-xs"
-                        style={{ backgroundColor: cat.color || '#4A6D22' }}
-                      />
-                      <span className="truncate">{cat.name}</span>
-                    </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold shrink-0 ${active ? 'bg-[#1A3700] text-[#D0E8B2]' : 'bg-[#E0E4D5] dark:bg-[#23261F] text-[#43493E] dark:text-[#8F9285]'}`}>
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="space-y-0.5">
+              {categoryTree.map((rootNode) => renderSidebarTreeItem(rootNode))}
 
               {categories.length === 0 && (
-                <div className="px-4 py-3 text-xs text-[#5E6258] dark:text-[#8F9285] italic">
+                <div className="px-3 py-3 text-xs text-[#5E6258] dark:text-[#8F9285] italic">
                   هنوز دسته‌ای ساخته نشده است.
                 </div>
               )}

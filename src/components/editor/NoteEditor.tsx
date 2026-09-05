@@ -17,6 +17,7 @@ import {
   PencilLine,
   Pin,
   Plus,
+  Printer,
   Save,
   Star,
   Trash2,
@@ -40,6 +41,7 @@ import { BlockRenderer } from '../blocks/BlockRenderer';
 import { BlockEditor } from './BlockEditor';
 import { EditorToolbar } from './EditorToolbar';
 import { api } from '../../services/api';
+import { getFlattenedCategoryTree, getCategoryPathString } from '../../lib/categoryUtils';
 
 type ViewMode = 'edit' | 'preview';
 
@@ -55,6 +57,7 @@ interface NoteEditorProps {
   onDelete?: (id: string, permanent?: boolean) => void;
   isTrashView?: boolean;
   onOpenCategoryManager?: () => void;
+  onDownloadPdf?: (note: Note) => void;
 }
 
 const IMPORTANCE_OPTIONS: { value: ImportanceLevel; label: string; icon: LucideIcon }[] = [
@@ -100,6 +103,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   onDelete,
   isTrashView = false,
   onOpenCategoryManager,
+  onDownloadPdf,
 }) => {
   // A null note means "compose a new one" — App passes null when the + button is used.
   const [noteId, setNoteId] = useState<string | null>(null);
@@ -383,6 +387,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     [updateBlock]
   );
 
+  const handleExportPdf = useCallback(() => {
+    if (!onDownloadPdf) return;
+    const noteForPdf: Note = {
+      ...(payload as any),
+      id: noteId || 'preview-note',
+      createdAt: note?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    onDownloadPdf(noteForPdf);
+  }, [onDownloadPdf, payload, noteId, note]);
+
   // Keyboard shortcuts
   useEffect(() => {
     if (!isOpen) return;
@@ -391,6 +406,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       if (mod && e.key.toLowerCase() === 's') {
         e.preventDefault();
         handleSave();
+      } else if (mod && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        handleExportPdf();
       } else if (mod && e.shiftKey && e.key.toLowerCase() === 'x') {
         e.preventDefault();
         runMark('strike');
@@ -406,7 +424,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, handleSave, onClose, runMark]);
+  }, [isOpen, handleSave, handleExportPdf, onClose, runMark]);
 
   const deleteBlock = useCallback(
     (bid: string) => {
@@ -1036,6 +1054,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             <span className="text-[10px] text-[#8F9285]">{wordCount} کلمه</span>
           </div>
 
+          {onDownloadPdf && (
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#EDEEEB] dark:bg-[#1C1C17] hover:bg-black/5 dark:hover:bg-white/10 text-[#4A6D22] dark:text-[#D0E8B2] text-[11px] font-bold transition-colors"
+              title="خروجی PDF و چاپ (Ctrl+P)"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">خروجی PDF</span>
+            </button>
+          )}
+
           <div className="relative">
             <button
               type="button"
@@ -1051,6 +1081,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                     so the menu never slides behind either. */}
                 <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
                 <div className="absolute left-0 top-10 z-50 w-52 bg-white dark:bg-[#1C1C17] rounded-2xl border border-[#E1E4D5] dark:border-[#43493E] shadow-2xl p-1.5">
+                  {onDownloadPdf && (
+                    <button
+                      onClick={() => {
+                        handleExportPdf();
+                        setMenuOpen(false);
+                      }}
+                      className="w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center gap-2 text-[#4A6D22] dark:text-[#D0E8B2]"
+                    >
+                      <Printer className="w-4 h-4" /> خروجی PDF و چاپ
+                    </button>
+                  )}
                   <button onClick={() => { setActivePanel('settings'); setMenuOpen(false); }} className="w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center gap-2">
                     <Palette className="w-4 h-4 text-[#4A6D22]" /> تنظیمات
                   </button>
@@ -1330,10 +1371,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   summary,
   setSummary,
   onOpenCategoryManager,
-}) => (
+}) => {
+  const flatCategoryOptions = useMemo(() => getFlattenedCategoryTree(categories), [categories]);
+  const activePathString = useMemo(
+    () => (categoryId ? getCategoryPathString(categoryId, categories) : ''),
+    [categoryId, categories]
+  );
+
+  return (
   <div className="p-4 space-y-5">
     <div>
-      <div className={label}>موضوع / دسته‌بندی</div>
+      <div className={label}>موضوع / دسته‌بندی و زیرمجموعه</div>
       <div className="flex items-center gap-2">
         <select
           value={categoryId}
@@ -1341,18 +1389,23 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           className="flex-1 bg-[#EDEEEB] dark:bg-[#1C1C17] rounded-xl px-3 py-2 text-xs font-bold text-[#1A1C16] dark:text-[#E2E3DC] outline-none border border-transparent focus:border-[#4A6D22]"
         >
           <option value="">بدون موضوع</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
+          {flatCategoryOptions.map((opt) => (
+            <option key={opt.category.id} value={opt.category.id}>
+              {'— '.repeat(opt.depth)} {opt.category.name}
             </option>
           ))}
         </select>
         {onOpenCategoryManager && (
-          <button type="button" onClick={onOpenCategoryManager} className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-[#5E6258] dark:text-[#8F9285]" title="مدیریت دسته‌ها">
+          <button type="button" onClick={onOpenCategoryManager} className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-[#5E6258] dark:text-[#8F9285]" title="مدیریت دسته‌ها و زیرمجموعه‌ها">
             <Plus className="w-4 h-4" />
           </button>
         )}
       </div>
+      {activePathString && (
+        <div className="text-[10px] text-[#4A6D22] dark:text-[#D0E8B2] mt-1.5 px-2 py-1 rounded-lg bg-[#D0E8B2]/20 dark:bg-[#1A3700]/50 border border-[#D0E8B2]/30 dark:border-[#3D522C]">
+          مسیر کامل: {activePathString}
+        </div>
+      )}
     </div>
 
     <div>
@@ -1449,7 +1502,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       </button>
     </div>
   </div>
-);
+  );
+};
 
 /* ---------- Attachments ---------- */
 const AttachmentsPanel: React.FC<{

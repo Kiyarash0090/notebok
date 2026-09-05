@@ -21,6 +21,7 @@ import { Note, Category, ImportanceLevel, NoteAttachment } from '../types';
 import { NOTE_COLORS } from '../constants';
 import { BlockRenderer } from './blocks/BlockRenderer';
 import { ensureBlocks } from '../lib/blocks';
+import { getCategoryPathString } from '../lib/categoryUtils';
 
 interface NoteCardProps {
   note: Note;
@@ -147,18 +148,21 @@ export const NoteCard: React.FC<NoteCardProps> = ({
           <div className="flex flex-wrap items-center gap-1.5">
             {importanceBadge()}
 
-            {category && (
-              <span
-                className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-[#D0E8B2]/20 dark:bg-[#1A3700] text-[#1A3700] dark:text-[#D0E8B2] border border-[#D0E8B2]/40 dark:border-[#3D522C]"
-                title={category.name}
-              >
+            {category && (() => {
+              const fullPath = getCategoryPathString(category.id, categories);
+              return (
                 <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: category.color || '#4A6D22' }}
-                />
-                <span className="truncate max-w-[110px]">{category.name}</span>
-              </span>
-            )}
+                  className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-[#D0E8B2]/20 dark:bg-[#1A3700] text-[#1A3700] dark:text-[#D0E8B2] border border-[#D0E8B2]/40 dark:border-[#3D522C]"
+                  title={`مسیر دسته‌بندی: ${fullPath}`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: category.color || '#4A6D22' }}
+                  />
+                  <span className="truncate max-w-[140px] sm:max-w-[180px]">{fullPath}</span>
+                </span>
+              );
+            })()}
           </div>
 
           {/* Pin & Star Quick Actions */}

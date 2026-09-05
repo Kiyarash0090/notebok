@@ -178,6 +178,7 @@ export interface Category {
   color: string;
   icon?: string;
   description?: string;
+  parentId?: string | null;
   createdAt: string;
 }
 

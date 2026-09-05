@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Minus } from 'lucide-react';
 import { TableData } from '../../types';
 import { reshapeTableData } from '../../lib/blocks';
@@ -14,6 +14,8 @@ export const TableEditor: React.FC<TableEditorProps> = ({ data, active, onUpdate
   const [selStart, setSelStart] = useState<number | null>(null);
   const [selEnd, setSelEnd] = useState<number | null>(null);
   const dragRef = useRef<false | number>(false); // dragging start index while a range is being dragged
+  const cellRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const isShiftEnterRef = useRef(false);
   const { rows, cols, cells, header } = data;
 
   const cellIndex = (r: number, c: number) => r * cols + c;
@@ -27,6 +29,72 @@ export const TableEditor: React.FC<TableEditorProps> = ({ data, active, onUpdate
     onUpdate(next);
     setSelStart((s) => (s !== null && s < next.cells.length ? s : null));
     setSelEnd((s) => (s !== null && s < next.cells.length ? s : null));
+  };
+
+  const focusCell = useCallback((targetIdx: number) => {
+    const el = cellRefs.current[targetIdx];
+    if (!el) return;
+    el.focus();
+    setSelStart(targetIdx);
+    setSelEnd(targetIdx);
+
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  }, []);
+
+  const goToNextCell = useCallback(
+    (currentIdx: number) => {
+      const nextIdx = currentIdx + 1;
+      const totalCells = rows * cols;
+      if (nextIdx < totalCells) {
+        focusCell(nextIdx);
+      } else {
+        // Last cell in table: automatically add a new row and focus its first cell
+        const next = reshapeTableData(data, rows + 1, cols);
+        onUpdate(next);
+        setTimeout(() => {
+          focusCell(nextIdx);
+        }, 40);
+      }
+    },
+    [data, rows, cols, focusCell, onUpdate]
+  );
+
+  const handleCellKeyDown = (e: React.KeyboardEvent<HTMLDivElement>, idx: number) => {
+    if (e.key === 'Enter') {
+      if (e.shiftKey) {
+        isShiftEnterRef.current = true;
+        setTimeout(() => {
+          isShiftEnterRef.current = false;
+        }, 150);
+        return;
+      }
+      e.preventDefault();
+      goToNextCell(idx);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      const nextIdx = e.shiftKey ? idx - 1 : idx + 1;
+      if (nextIdx >= 0 && nextIdx < rows * cols) {
+        focusCell(nextIdx);
+      }
+    }
+  };
+
+  const handleCellBeforeInput = (e: React.FormEvent<HTMLDivElement>, idx: number) => {
+    const nativeEvent = e.nativeEvent as InputEvent;
+    if (
+      (nativeEvent?.inputType === 'insertParagraph' || nativeEvent?.inputType === 'insertLineBreak') &&
+      !isShiftEnterRef.current
+    ) {
+      e.preventDefault();
+      goToNextCell(idx);
+    }
   };
 
   // rectangle covering the current selection
@@ -107,6 +175,8 @@ export const TableEditor: React.FC<TableEditorProps> = ({ data, active, onUpdate
                         contentEditable
                         suppressContentEditableWarning
                         onInput={(e) => setCell(idx, { text: e.currentTarget.innerText })}
+                        onKeyDown={(e) => handleCellKeyDown(e, idx)}
+                        onBeforeInput={(e) => handleCellBeforeInput(e, idx)}
                         onMouseDown={(e) => {
                           e.stopPropagation();
                           beginSelect(idx, e.shiftKey);
@@ -117,6 +187,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({ data, active, onUpdate
                           setSelEnd(idx);
                         }}
                         ref={(el) => {
+                          cellRefs.current[idx] = el;
                           if (el && el.innerText !== cell.text) el.innerText = cell.text;
                         }}
                         className="min-w-8 min-h-6 px-2 py-1 outline-none whitespace-pre-wrap break-words text-[#1A1C16] dark:text-[#E2E3DC]"

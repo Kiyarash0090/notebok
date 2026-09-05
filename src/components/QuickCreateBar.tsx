@@ -23,6 +23,7 @@ import { VoiceRecorderModule } from './VoiceRecorderModule';
 import { LatexFormulaModal } from './LatexFormulaModal';
 import { BatchUploadProgress, uploadMediaFiles } from '../lib/media';
 import { UploadProgressBar } from './UploadProgressBar';
+import { getFlattenedCategoryTree } from '../lib/categoryUtils';
 
 interface QuickCreateBarProps {
   categories: Category[];
@@ -534,13 +535,13 @@ export const QuickCreateBar: React.FC<QuickCreateBarProps> = ({
                   <option value="" className="bg-white dark:bg-[#1C1C17] text-black dark:text-white">
                     بدون دسته‌بندی
                   </option>
-                  {categories.map((c) => (
+                  {getFlattenedCategoryTree(categories).map((opt) => (
                     <option
-                      key={c.id}
-                      value={c.id}
+                      key={opt.category.id}
+                      value={opt.category.id}
                       className="bg-white dark:bg-[#1C1C17] text-black dark:text-white"
                     >
-                      {c.name}
+                      {'— '.repeat(opt.depth)} {opt.category.name}
                     </option>
                   ))}
                 </select>

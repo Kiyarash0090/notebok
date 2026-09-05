@@ -34,6 +34,20 @@
   direction: rtl;
 }
 
+/* KaTeX Persian & Math typography */
+.katex {
+  font-size: 1.05em;
+  text-rendering: auto;
+}
+.katex .mord.text,
+.katex .mord[style*="font-family"],
+.katex .text {
+  font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+.katex-display {
+  margin: 0.25em 0 !important;
+}
+
 /* Safe area for mobile devices */
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 16px);
@@ -69,9 +83,173 @@
 
 /* Print / PDF export: only the note content is shown */
 .print-doc { display: none; }
+
 @media print {
-  .print-doc { display: block !important; }
-  #root > div:not(.print-doc) { display: none !important; }
-  body { background: #ffffff !important; }
-  .print-doc { background: #ffffff; color: #1A1C16; }
+  @page {
+    margin: 12mm 12mm 15mm 12mm;
+    size: auto;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #1a1c16 !important;
+    font-family: 'Vazirmatn', system-ui, -apple-system, sans-serif !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #root > div:not(.print-doc) {
+    display: none !important;
+  }
+
+  .print-doc {
+    display: block !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #1a1c16 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    width: 100% !important;
+  }
+
+  /* Force exact color reproduction on all children */
+  .print-doc,
+  .print-doc * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Isolate print document from dark mode background & text inversions */
+  .print-doc [class*="text-[#E2E3DC]"],
+  .print-doc [class*="text-[#D1D5DB]"],
+  .print-doc [class*="text-[#BCC2B2]"] {
+    color: #1a1c16 !important;
+  }
+
+  /* Highlighting: crisp vibrant yellow highlight in PDF */
+  .print-doc mark,
+  mark,
+  [data-mark="highlight"] {
+    background-color: #fef08a !important;
+    color: #1a1c16 !important;
+    padding: 2px 6px !important;
+    border-radius: 4px !important;
+    border: 1px solid #facc15 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-decoration-break: clone !important;
+    -webkit-box-decoration-break: clone !important;
+  }
+
+  /* Inline code: clean pill box with border */
+  .print-doc code:not(pre code),
+  code:not(pre code),
+  [data-mark="code"] {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 5px !important;
+    padding: 1px 6px !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    font-size: 0.88em !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Code blocks: professional code container */
+  .print-doc pre,
+  pre {
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+    border: 1.5px solid #cbd5e1 !important;
+    border-radius: 10px !important;
+    padding: 12px 16px !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    font-size: 11px !important;
+    line-height: 1.6 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-doc pre code,
+  pre code {
+    background: transparent !important;
+    background-color: transparent !important;
+    color: #0f172a !important;
+    border: none !important;
+    padding: 0 !important;
+  }
+
+  /* Bold & Strong */
+  .print-doc strong, .print-doc b, strong, b {
+    font-weight: 800 !important;
+    color: #0f172a !important;
+  }
+
+  /* Italic */
+  .print-doc em, .print-doc i, em, i {
+    font-style: italic !important;
+  }
+
+  /* Strikethrough */
+  .print-doc del, .print-doc s, del, s {
+    text-decoration: line-through !important;
+    color: #64748b !important;
+  }
+
+  /* Underline */
+  .print-doc u, u {
+    text-decoration: underline !important;
+    text-underline-offset: 3px !important;
+  }
+
+  /* Math (KaTeX) */
+  .print-doc .katex,
+  .print-doc .katex-display {
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Quotes */
+  .print-doc blockquote {
+    border-right: 4px solid #4a6d22 !important;
+    background-color: #f8faf5 !important;
+    padding: 8px 14px !important;
+    color: #2c3327 !important;
+    border-radius: 0 8px 8px 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Headings */
+  .print-doc h1, .print-doc h2, .print-doc h3 {
+    color: #1a1c16 !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* Tables */
+  .print-doc table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-doc td, .print-doc th {
+    border: 1px solid #cbd5e1 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Checklist and Callout cards */
+  .print-doc .block-wrapper {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
 }
+

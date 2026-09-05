@@ -320,7 +320,7 @@ export const api = {
     return data.categories || [];
   },
 
-  async createCategory(cat: { name: string; color?: string; icon?: string; description?: string }): Promise<Category> {
+  async createCategory(cat: { name: string; color?: string; icon?: string; description?: string; parentId?: string | null }): Promise<Category> {
     const res = await fetch('/api/categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -1307,6 +1307,7 @@ export const ShapeCustomizerModal: React.FC<ShapeCustomizerModalProps> = ({
                     )}
                   </div>
                   <textarea
+                    autoFocus={activeTab === 'text'}
                     rows={3}
                     value={shape.text || ''}
                     onChange={(e) => setShape((s) => ({ ...s, text: e.target.value }))}
