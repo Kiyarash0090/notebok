@@ -39,7 +39,18 @@ function applySearchHighlight(node: React.ReactNode, query?: string, keyPrefix =
 
 // Code spans, inline/block math, environments, and HTML tags are atomic: emphasis markers inside them are literal.
 const ATOMIC_PATTERN_MATH =
-  '(`[^`\\n]+`)|(\\$\\$[\\s\\S]*?\\$\\$)|(\\\\[\\x5B\\x5D][\\s\\S]*?\\\\[\\x5B\\x5D])|(\\$[^$\\n]+\\$)|(\\\\[\\x28\\x29][\\s\\S]*?\\\\[\\x28\\x29])|(\\\\begin\\{[a-zA-Z0-9_*]+\\}[\\s\\S]*?\\\\end\\{[a-zA-Z0-9_*]+\\})|(<mark>[\\s\\S]*?<\\/mark>)|(<code>[\\s\\S]*?<\\/code>)|(<u>[\\s\\S]*?<\\/u>)|(<del>[\\s\\S]*?<\\/del>)|(<s>[\\s\\S]*?<\\/s>)';
+  '(`[^`\\n]+`)' +
+  '|(\\$\\$[\\s\\S]*?\\$\\$)' +
+  '|(\\\\[\\x5B\\x5D][\\s\\S]*?\\\\[\\x5B\\x5D])' +
+  '|(\\$[^$\\n]+\\$)' +
+  '|(\\\\[\\x28\\x29][\\s\\S]*?\\\\[\\x28\\x29])' +
+  '|(\\\\begin\\{[a-zA-Z0-9_*]+\\}[\\s\\S]*?\\\\end\\{[a-zA-Z0-9_*]+\\})' +
+  '|((?:(?:\\d+[\\.\\,]?\\d*\\s*)?\\\\[a-zA-Z]+(?:\\{[^\\}\\n]*\\}|\\[[^\\]\\n]*\\])*(?:\\s*(?:[\\+\\-\\*/=\\>\\<]|\\\\(?:rightarrow|leftarrow|Rightarrow|Leftarrow|to|times|div|le|ge|ne|approx|in|cdot)\\b|\\rightarrow|\\leftarrow|\\&)\\s*(?:\\d+[\\.\\,]?\\d*\\s*)?(?:\\\\[a-zA-Z]+(?:\\{[^\\}\\n]*\\}|\\[[^\\]\\n]*\\])*|[a-zA-Z0-9]+))*)+)' +
+  '|(<mark>[\\s\\S]*?<\\/mark>)' +
+  '|(<code>[\\s\\S]*?<\\/code>)' +
+  '|(<u>[\\s\\S]*?<\\/u>)' +
+  '|(<del>[\\s\\S]*?<\\/del>)' +
+  '|(<s>[\\s\\S]*?<\\/s>)';
 
 const ATOMIC_PATTERN_NO_MATH =
   '(`[^`\\n]+`)|(<mark>[\\s\\S]*?<\\/mark>)|(<code>[\\s\\S]*?<\\/code>)|(<u>[\\s\\S]*?<\\/u>)|(<del>[\\s\\S]*?<\\/del>)|(<s>[\\s\\S]*?<\\/s>)';
@@ -184,18 +195,21 @@ export const InlineText: React.FC<InlineTextProps> = ({
 
       if (!line) return;
 
-      // Check if line contains LaTeX math delimiters or LaTeX commands
-      const hasMathDelimiters = /[\$\\]/.test(line);
-      const hasLatexCommands = /\\\w{2,}/.test(line) || /\\\[|\\\]|\\\(|\\\)|\\begin\{/.test(line);
+      const trimmedLine = line.trim();
+      // Only render whole line as display MathRenderer if it's purely a display math formula block
+      const isPureDisplayBlock =
+        (trimmedLine.startsWith('$$') && trimmedLine.endsWith('$$')) ||
+        (trimmedLine.startsWith('\\[') && trimmedLine.endsWith('\\]')) ||
+        (trimmedLine.startsWith('\\begin{') && trimmedLine.endsWith('}'));
 
-      if (renderMath && (hasMathDelimiters || hasLatexCommands)) {
+      if (renderMath && isPureDisplayBlock) {
         result.push(<MathRenderer key={`math-line-${lineIdx}`} text={line} />);
         return;
       }
 
-      // Render standard markdown emphasis & inline formatting
+      // Render standard markdown emphasis & inline formatting + inline math
       const out: Array<{ key: string; node: React.ReactNode }> = [];
-      const re = new RegExp(ATOMIC_PATTERN_NO_MATH, 'g');
+      const re = new RegExp(renderMath ? ATOMIC_PATTERN_MATH : ATOMIC_PATTERN_NO_MATH, 'g');
       let lastIndex = 0;
       let i = 0;
       let m: RegExpExecArray | null;
@@ -213,7 +227,19 @@ export const InlineText: React.FC<InlineTextProps> = ({
 
         const token = m[0];
 
-        if (token.startsWith('`')) {
+        // Check if token is an inline math formula
+        const isMathToken =
+          renderMath &&
+          (token.startsWith('$') ||
+            token.startsWith('\\') ||
+            /^\d+[\.\,]?\d*\s*\\/.test(token));
+
+        if (isMathToken) {
+          out.push({
+            key: `m${lineIdx}-${i++}`,
+            node: <MathRenderer key={`math-inline-${lineIdx}-${i}`} text={token} inline={true} />,
+          });
+        } else if (token.startsWith('`')) {
           // Inline Code `...`
           const codeContent = token.slice(1, -1);
           out.push({

@@ -5,7 +5,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
-  * {
+  body {
     font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   }
 }
@@ -38,22 +38,6 @@
 .katex {
   font-size: 1.05em;
   text-rendering: auto;
-}
-/* Ensure math symbols, arrows, operators use KaTeX_Main and standard math fonts */
-.katex .mrel,
-.katex .mbin,
-.katex .mop,
-.katex .mopen,
-.katex .mclose,
-.katex .mpunct,
-.katex .mord:not(.text),
-.katex .base {
-  font-family: 'KaTeX_Main', 'KaTeX_Math', 'KaTeX_Size1', 'KaTeX_AMS', -apple-system, sans-serif !important;
-}
-.katex .mord.text,
-.katex .mord[style*="font-family"],
-.katex .text {
-  font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
 }
 .katex-display {
   margin: 0.25em 0 !important;

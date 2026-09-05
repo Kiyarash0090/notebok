@@ -4,6 +4,7 @@ import katex from 'katex';
 interface MathRendererProps {
   text: string;
   className?: string;
+  inline?: boolean;
 }
 
 /**
@@ -133,7 +134,7 @@ export function normalizeLatex(input: string): string {
   return str;
 }
 
-export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = '' }) => {
+export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = '', inline = false }) => {
   // Normalize input string for various LaTeX delimiters
   const normalizedText = useMemo(() => normalizeLatex(text), [text]);
 
@@ -175,8 +176,9 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = ''
           inlineParts.push(
             <span
               key={`${keyPrefix}-m-${inlineMatch.index}`}
-              className="inline-katex mx-1 font-sans select-all inline-block align-middle"
+              className="inline-katex mx-0.5 font-sans select-all inline-block align-middle"
               dir="ltr"
+              style={{ unicodeBidi: 'isolate' }}
               dangerouslySetInnerHTML={{ __html: html }}
             />
           );
@@ -206,8 +208,9 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = ''
             inlineParts.push(
               <span
                 key={`${keyPrefix}-m-standalone`}
-                className="inline-katex mx-1 font-sans select-all inline-block align-middle"
+                className="inline-katex mx-0.5 font-sans select-all inline-block align-middle"
                 dir="ltr"
+                style={{ unicodeBidi: 'isolate' }}
                 dangerouslySetInnerHTML={{ __html: html }}
               />
             );
@@ -306,6 +309,10 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = ''
 
     return parts;
   }, [normalizedText]);
+
+  if (inline || !normalizedText.includes('$$')) {
+    return <span className={`inline-math ${className}`} style={{ unicodeBidi: 'isolate' }}>{elements}</span>;
+  }
 
   return <div className={className}>{elements}</div>;
 };
