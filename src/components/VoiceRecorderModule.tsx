@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Sparkles,
 } from 'lucide-react';
+import { useBackButton } from '../lib/useBackButton';
 
 interface VoiceRecorderModuleProps {
   isOpen: boolean;
@@ -23,6 +24,7 @@ export const VoiceRecorderModule: React.FC<VoiceRecorderModuleProps> = ({
   onClose,
   onInsertAudio,
 }) => {
+  useBackButton(isOpen, onClose, 'voice-recorder-module');
   const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'paused' | 'review'>('idle');
   const [duration, setDuration] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);

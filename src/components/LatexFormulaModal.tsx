@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Check, Sparkles, HelpCircle, Copy, Code, Eye, RefreshCw } from 'lucide-react';
 import { MathRenderer } from './MathRenderer';
+import { useBackButton } from '../lib/useBackButton';
 
 interface LatexFormulaModalProps {
   isOpen: boolean;
@@ -15,6 +16,7 @@ export const LatexFormulaModal: React.FC<LatexFormulaModalProps> = ({
   onConfirm,
   initialFormula = '',
 }) => {
+  useBackButton(isOpen, onClose, 'latex-formula-modal');
   const [formula, setFormula] = useState(initialFormula);
   const [displayMode, setDisplayMode] = useState<'inline' | 'block'>('block');
   const [activeCategory, setActiveCategory] = useState<'basic' | 'calculus' | 'greek' | 'symbols' | 'matrices'>('basic');

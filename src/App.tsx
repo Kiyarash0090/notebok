@@ -28,6 +28,7 @@ import { AdvancedSearchModal, AdvancedSearchFilters } from './components/Advance
 import { TelegramModal } from './components/TelegramModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { getCategoryDescendantIds, getCategoryPathString } from './lib/categoryUtils';
+import { useBackButton } from './lib/useBackButton';
 
 export default function App() {
   // Theme state
@@ -89,47 +90,28 @@ export default function App() {
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
 
-  // ---- Browser/hardware Back should close the top overlay, not leave the app.
-  // We push one history entry while any overlay is open and consume it on Back;
-  // programmatic closes mirror it with a suppressed history.back().
-  const suppressBackRef = useRef(false);
+  // Register all App-level overlays, modals, and views with mobile back button stack
+  useBackButton(isSidebarOpen, () => setIsSidebarOpen(false), 'app-sidebar');
+  useBackButton(isEditorOpen, () => setIsEditorOpen(false), 'app-editor');
+  useBackButton(isCategoryManagerOpen, () => setIsCategoryManagerOpen(false), 'app-category-manager');
+  useBackButton(isBackupModalOpen, () => setIsBackupModalOpen(false), 'app-backup-modal');
+  useBackButton(isAdvancedSearchOpen, () => setIsAdvancedSearchOpen(false), 'app-advanced-search');
+  useBackButton(isTelegramModalOpen, () => setIsTelegramModalOpen(false), 'app-telegram-modal');
+  useBackButton(!!printNote, () => setPrintNote(null), 'app-print-note');
+
+  // Navigation state back handlers (clear filter/search before leaving)
+  useBackButton(!!selectedCategory, () => setSelectedCategory(null), 'app-category-filter');
+  useBackButton(!!searchQuery, () => setSearchQuery(''), 'app-search-query');
+  useBackButton(currentFilter !== 'all', () => setCurrentFilter('all'), 'app-view-filter');
+
   const anyOverlayOpen =
     isEditorOpen ||
     isSidebarOpen ||
     isCategoryManagerOpen ||
     isBackupModalOpen ||
     isAdvancedSearchOpen ||
-    isTelegramModalOpen;
-  const prevAnyOverlayOpenRef = useRef(anyOverlayOpen);
-
-  useEffect(() => {
-    if (prevAnyOverlayOpenRef.current === anyOverlayOpen) return;
-    prevAnyOverlayOpenRef.current = anyOverlayOpen;
-    if (anyOverlayOpen) {
-      window.history.pushState({ overlay: true }, '');
-    } else {
-      // Unwind the entry a programmatic close left behind; ignore the popstate it triggers.
-      suppressBackRef.current = true;
-      window.history.back();
-    }
-  }, [anyOverlayOpen]);
-
-  useEffect(() => {
-    const onPop = () => {
-      if (suppressBackRef.current) {
-        suppressBackRef.current = false;
-        return;
-      }
-      // Close the topmost open overlay (full-screen editor first, then dialogs).
-      if (isEditorOpen) setIsEditorOpen(false);
-      else if (isCategoryManagerOpen) setIsCategoryManagerOpen(false);
-      else if (isBackupModalOpen) setIsBackupModalOpen(false);
-      else if (isAdvancedSearchOpen) setIsAdvancedSearchOpen(false);
-      else if (isSidebarOpen) setIsSidebarOpen(false);
-    };
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, [isEditorOpen, isCategoryManagerOpen, isBackupModalOpen, isAdvancedSearchOpen, isSidebarOpen]);
+    isTelegramModalOpen ||
+    !!printNote;
 
   // Lock the background page scroll while any overlay/popup is open so the
   // wheel only scrolls the layer in front, not the layers underneath.

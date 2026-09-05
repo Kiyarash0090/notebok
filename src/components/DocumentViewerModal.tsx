@@ -27,6 +27,7 @@ import hljs from 'highlight.js/lib/common';
 import 'highlight.js/styles/github-dark.css';
 import { PdfPlayer } from './PdfPlayer';
 import { NoteAttachment } from '../types';
+import { useBackButton } from '../lib/useBackButton';
 import {
   getFileCategory,
   getFileExtension,
@@ -61,6 +62,8 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
   onClose,
   onSaveAttachment,
 }) => {
+  useBackButton(!!attachment, onClose, 'document-viewer-modal');
+
   if (!attachment) return null;
 
   const category: FileCategory = getFileCategory(attachment.name);

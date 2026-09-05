@@ -5,6 +5,35 @@ interface InlineTextProps {
   text: string;
   className?: string;
   isPrint?: boolean;
+  highlightQuery?: string;
+}
+
+// Helper to highlight matching text search queries
+function applySearchHighlight(node: React.ReactNode, query?: string, keyPrefix = 'hl'): React.ReactNode {
+  if (!query || !query.trim() || node === null || node === undefined) return node;
+  const q = query.trim();
+  if (typeof node === 'string') {
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = node.split(new RegExp(`(${escaped})`, 'gi'));
+    if (parts.length <= 1) return node;
+    return (
+      <React.Fragment key={keyPrefix}>
+        {parts.map((part, idx) =>
+          part.toLowerCase() === q.toLowerCase() ? (
+            <mark
+              key={`${keyPrefix}-${idx}`}
+              className="bg-[#D0E8B2] dark:bg-[#4A6D22] text-[#1A3700] dark:text-[#E2E3DC] font-extrabold px-1 py-0.5 rounded shadow-sm border border-[#4A6D22]/40"
+            >
+              {part}
+            </mark>
+          ) : (
+            part
+          )
+        )}
+      </React.Fragment>
+    );
+  }
+  return node;
 }
 
 // Code spans, inline math, and HTML tags are atomic: emphasis markers inside them are literal.
@@ -41,16 +70,16 @@ const scanPairs = (
   return out + text.slice(last);
 };
 
-const materialize = (text: string, store: KeyedNode[], kp: string): React.ReactNode[] =>
+const materialize = (text: string, store: KeyedNode[], kp: string, highlightQuery?: string): React.ReactNode[] =>
   text
     .split(PLACEHOLDER_SPLIT)
     .map((part, i) => {
       const ph = part.match(/^\uE000(\d+)\uE001$/);
       if (ph) return store[Number(ph[1])](`${kp}-n${i}`);
-      return part;
+      return applySearchHighlight(part, highlightQuery, `${kp}-t${i}`);
     });
 
-const renderEmphasis = (text: string, kp: string, isPrint = false): React.ReactNode[] => {
+const renderEmphasis = (text: string, kp: string, isPrint = false, highlightQuery?: string): React.ReactNode[] => {
   const store: KeyedNode[] = [];
   let work = scanPairs(
     text,
@@ -59,7 +88,7 @@ const renderEmphasis = (text: string, kp: string, isPrint = false): React.ReactN
       if (marker === '~~') {
         return (key) => (
           <del key={key} className="line-through text-[#8F9285] dark:text-[#A8AC9F] print:text-[#64748B]">
-            {renderEmphasis(inner, key, isPrint)}
+            {renderEmphasis(inner, key, isPrint, highlightQuery)}
           </del>
         );
       }
@@ -77,27 +106,27 @@ const renderEmphasis = (text: string, kp: string, isPrint = false): React.ReactN
             }}
             data-mark="highlight"
           >
-            {renderEmphasis(inner, key, isPrint)}
+            {renderEmphasis(inner, key, isPrint, highlightQuery)}
           </mark>
         );
       }
       if (marker === '__') {
         return (key) => (
           <u key={key} className="underline underline-offset-2 decoration-[#4A6D22] dark:decoration-[#D0E8B2]">
-            {renderEmphasis(inner, key, isPrint)}
+            {renderEmphasis(inner, key, isPrint, highlightQuery)}
           </u>
         );
       }
       if (marker === '***') {
         return (key) => (
           <em key={key} className="italic font-bold">
-            {renderEmphasis(inner, key, isPrint)}
+            {renderEmphasis(inner, key, isPrint, highlightQuery)}
           </em>
         );
       }
       return (key) => (
         <strong key={key} className="font-bold text-[#1A1C16] dark:text-[#E2E3DC] print:text-[#0F172A]">
-          {renderEmphasis(inner, key, isPrint)}
+          {renderEmphasis(inner, key, isPrint, highlightQuery)}
         </strong>
       );
     },
@@ -109,7 +138,7 @@ const renderEmphasis = (text: string, kp: string, isPrint = false): React.ReactN
     PAIR2_STAR_PATTERN,
     (_marker, inner) => (key) => (
       <em key={key} className="italic">
-        {materialize(inner, store, key)}
+        {materialize(inner, store, key, highlightQuery)}
       </em>
     ),
     store
@@ -120,17 +149,17 @@ const renderEmphasis = (text: string, kp: string, isPrint = false): React.ReactN
     PAIR2_UNDER_PATTERN,
     (_marker, inner) => (key) => (
       <em key={key} className="italic">
-        {materialize(inner, store, key)}
+        {materialize(inner, store, key, highlightQuery)}
       </em>
     ),
     store
   );
 
-  return materialize(work, store, kp);
+  return materialize(work, store, kp, highlightQuery);
 };
 
 // Renders markdown-ish emphasis + inline $...$ math + code + highlights
-export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint = false }) => {
+export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint = false, highlightQuery }) => {
   const parts = React.useMemo(() => {
     if (!text) return [];
     const out: Array<{ key: string; node: React.ReactNode }> = [];
@@ -142,7 +171,7 @@ export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint
     while ((m = re.exec(text)) !== null) {
       if (m.index > lastIndex) {
         out.push(
-          ...renderEmphasis(text.slice(lastIndex, m.index), `t${i}`, isPrint).map((node, k) => ({
+          ...renderEmphasis(text.slice(lastIndex, m.index), `t${i}`, isPrint, highlightQuery).map((node, k) => ({
             key: `p${i}-${k}`,
             node,
           }))
@@ -172,7 +201,7 @@ export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint
               }}
               data-mark="code"
             >
-              {codeContent}
+              {applySearchHighlight(codeContent, highlightQuery, `ic${i}`)}
             </code>
           ),
         });
@@ -193,7 +222,7 @@ export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint
               }}
               data-mark="highlight"
             >
-              {inner}
+              {applySearchHighlight(inner, highlightQuery, `hm${i}`)}
             </mark>
           ),
         });
@@ -214,7 +243,7 @@ export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint
               }}
               data-mark="code"
             >
-              {inner}
+              {applySearchHighlight(inner, highlightQuery, `hc${i}`)}
             </code>
           ),
         });
@@ -223,14 +252,14 @@ export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint
         const inner = token.replace(/^<u>|<\/u>$/gi, '');
         out.push({
           key: `hu${i++}`,
-          node: <u className="underline underline-offset-2">{inner}</u>,
+          node: <u className="underline underline-offset-2">{applySearchHighlight(inner, highlightQuery, `hu${i}`)}</u>,
         });
       } else if (token.startsWith('<del>') || token.startsWith('<s>')) {
         // HTML <del> / <s>
         const inner = token.replace(/^<(del|s)>|<\/(del|s)>$/gi, '');
         out.push({
           key: `hd${i++}`,
-          node: <del className="line-through text-[#8F9285] print:text-[#64748B]">{inner}</del>,
+          node: <del className="line-through text-[#8F9285] print:text-[#64748B]">{applySearchHighlight(inner, highlightQuery, `hd${i}`)}</del>,
         });
       }
 
@@ -239,7 +268,7 @@ export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint
 
     if (lastIndex < text.length) {
       out.push(
-        ...renderEmphasis(text.slice(lastIndex), `t${i}`, isPrint).map((node, k) => ({
+        ...renderEmphasis(text.slice(lastIndex), `t${i}`, isPrint, highlightQuery).map((node, k) => ({
           key: `p${i}-${k}`,
           node,
         }))
@@ -247,7 +276,7 @@ export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint
     }
 
     return out.map((o) => o.node);
-  }, [text, isPrint]);
+  }, [text, isPrint, highlightQuery]);
 
   return <span className={className}>{parts}</span>;
 };

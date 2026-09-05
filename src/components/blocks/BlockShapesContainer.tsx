@@ -19,6 +19,7 @@ import { NoteBlock, ShapeConfig } from '../../types';
 import { ShapeSvg } from './ShapeSvg';
 import { ShapeCustomizerModal } from '../editor/ShapeCustomizerModal';
 import { getBlockShapes, uid } from '../../lib/blocks';
+import { useBackButton } from '../../lib/useBackButton';
 
 interface BlockShapesContainerProps {
   block: NoteBlock;
@@ -68,6 +69,8 @@ export const BlockShapesContainer: React.FC<BlockShapesContainerProps> = ({
   const [editingShapeIndex, setEditingShapeIndex] = useState<number | null>(null);
   const [selectedShapeIndex, setSelectedShapeIndex] = useState<number | null>(null);
   const [customizerInitialTab, setCustomizerInitialTab] = useState<'shape' | 'size' | 'color' | 'text'>('shape');
+
+  useBackButton(editingShapeIndex !== null, () => setEditingShapeIndex(null), 'shape-customizer-modal');
   
   // Real-time live dimensions during active drag resize
   const [liveResize, setLiveResize] = useState<{ index: number; width: number; height: number } | null>(null);
@@ -611,7 +614,7 @@ export const BlockShapesContainer: React.FC<BlockShapesContainerProps> = ({
 
         // Determine zIndex based on layer position (kept safely below header toolbar & popups)
         let baseZIndex = index + 1;
-        if (isBehind) baseZIndex = 0;
+        if (isBehind) baseZIndex = -1;
         if (isInFront) baseZIndex = 10;
         if (isSelected) baseZIndex = 20;
 
@@ -627,7 +630,9 @@ export const BlockShapesContainer: React.FC<BlockShapesContainerProps> = ({
             }`}
             style={{
               zIndex: baseZIndex,
-              transform: `translate3d(${currentPosX}px, ${currentPosY}px, 0)`,
+              transform: currentPosX || currentPosY
+                ? `translate3d(${currentPosX}px, ${currentPosY}px, 0)`
+                : undefined,
               willChange: isCurrentlyDragging ? 'transform' : 'auto',
             }}
           >

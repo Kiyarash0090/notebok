@@ -251,5 +251,11 @@
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
+
+  /* Shape elements in print: keep intact, prevent overflow or strange clipping */
+  .print-doc .shape-item-container {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
 }
 

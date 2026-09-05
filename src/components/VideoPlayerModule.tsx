@@ -13,6 +13,7 @@ import {
   Video,
   Settings,
 } from 'lucide-react';
+import { useBackButton } from '../lib/useBackButton';
 
 interface VideoPlayerModalProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   src,
   title = 'ویدیو',
 }) => {
+  useBackButton(isOpen, onClose, 'video-player-modal');
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 

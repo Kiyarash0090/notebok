@@ -2,9 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   Check,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Eye,
   FileClock,
+  Filter,
   Flame,
   History,
   Image as ImageIcon,
@@ -19,6 +22,7 @@ import {
   Plus,
   Printer,
   Save,
+  Search,
   Star,
   Trash2,
   Video,
@@ -37,11 +41,12 @@ import {
 import { BatchUploadProgress, pickMediaFiles, uploadMediaFiles } from '../../lib/media';
 import { UploadProgressBar } from '../UploadProgressBar';
 import { applyMark } from '../../lib/marks';
-import { BlockRenderer } from '../blocks/BlockRenderer';
+import { BlockRenderer, blockMatchesQuery } from '../blocks/BlockRenderer';
 import { BlockEditor } from './BlockEditor';
 import { EditorToolbar } from './EditorToolbar';
 import { api } from '../../services/api';
 import { getFlattenedCategoryTree, getCategoryPathString } from '../../lib/categoryUtils';
+import { useBackButton } from '../../lib/useBackButton';
 
 type ViewMode = 'edit' | 'preview';
 
@@ -119,6 +124,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
 
   const [mode, setMode] = useState<ViewMode>('edit');
+  const [isPreviewSearchOpen, setIsPreviewSearchOpen] = useState(false);
   // On narrow screens the panel is a slide-over, so it must not cover the editor on open
   const [activePanel, setActivePanel] = useState<'settings' | 'history' | 'attachments' | null>(null);
   const [saving, setSaving] = useState(false);
@@ -143,6 +149,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [tagInput, setTagInput] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+
+  // Mobile Back Button handlers for editor sub-modals & panels
+  useBackButton(!!activePanel, () => setActivePanel(null), 'editor-active-panel');
+  useBackButton(importOpen, () => setImportOpen(false), 'editor-import-open');
+  useBackButton(menuOpen, () => setMenuOpen(false), 'editor-menu-open');
   // Only one block's control rail is visible at a time (owned by the editor).
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   // Last block that was clicked/focused; kept even after blur so the "insert
@@ -1048,6 +1059,25 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <Eye className="w-3.5 h-3.5" />
               پیش‌نمایش
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (mode !== 'preview') {
+                  setMode('preview');
+                  setIsPreviewSearchOpen(true);
+                } else {
+                  setIsPreviewSearchOpen((prev) => !prev);
+                }
+              }}
+              className={`p-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                mode === 'preview' && isPreviewSearchOpen
+                  ? 'bg-[#4A6D22] text-white shadow-xs'
+                  : 'text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10'
+              }`}
+              title="جستجو در متن جزوه"
+            >
+              <Search className="w-3.5 h-3.5" />
+            </button>
           </div>
 
           <div className="flex items-center gap-1 mr-auto">
@@ -1169,7 +1199,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 </button>
               </div>
             ) : (
-              <PreviewPane blocks={blocks} attachments={attachments} title={title} summary={summary} />
+              <PreviewPane
+                blocks={blocks}
+                attachments={attachments}
+                title={title}
+                summary={summary}
+                isSearchOpen={isPreviewSearchOpen}
+                setIsSearchOpen={setIsPreviewSearchOpen}
+              />
             )}
           </div>
         </div>
@@ -1309,22 +1346,222 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 };
 
 /* ---------- Preview ---------- */
-const PreviewPane: React.FC<{ blocks: NoteBlock[]; attachments: NoteAttachment[]; title: string; summary: string }> = ({
-  blocks,
-  attachments,
-  title,
-  summary,
-}) => (
-  <div className="space-y-3">
-    {title?.trim() && <h1 className="text-xl font-extrabold text-[#1A1C16] dark:text-[#E2E3DC]">{title}</h1>}
-    {summary?.trim() && (
-      <div className="p-3 rounded-2xl bg-[#EDF5E0] dark:bg-[#232F1A] border border-[#D0E8B2] dark:border-[#3D522C] text-xs text-[#4A6D22] dark:text-[#D0E8B2] leading-relaxed">
-        {summary}
-      </div>
-    )}
-    <BlockRenderer blocks={pruneEmptyBlocks(blocks)} attachments={attachments} />
-  </div>
-);
+const PreviewPane: React.FC<{
+  blocks: NoteBlock[];
+  attachments: NoteAttachment[];
+  title: string;
+  summary: string;
+  isSearchOpen: boolean;
+  setIsSearchOpen: (open: boolean) => void;
+}> = ({ blocks, attachments, title, summary, isSearchOpen, setIsSearchOpen }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const [filterMatchesOnly, setFilterMatchesOnly] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Close search bar on mobile back button
+  useBackButton(
+    isSearchOpen,
+    () => {
+      setIsSearchOpen(false);
+      setSearchQuery('');
+    },
+    'preview-search-bar'
+  );
+
+  useEffect(() => {
+    if (isSearchOpen) {
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+    } else {
+      setSearchQuery('');
+    }
+  }, [isSearchOpen]);
+
+  const toggleSearch = () => {
+    setIsSearchOpen(!isSearchOpen);
+  };
+
+  const prunedBlocks = useMemo(() => pruneEmptyBlocks(blocks), [blocks]);
+
+  // Find matching blocks
+  const matchingBlocks = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    return prunedBlocks.filter((b) => blockMatchesQuery(b, searchQuery));
+  }, [prunedBlocks, searchQuery]);
+
+  const totalMatches = matchingBlocks.length;
+  const activeMatchBlockId = matchingBlocks[activeMatchIndex]?.id;
+
+  // Reset active index when search query changes
+  useEffect(() => {
+    setActiveMatchIndex(0);
+  }, [searchQuery]);
+
+  // Smooth scroll to active match
+  const scrollToMatch = useCallback((blockId?: string) => {
+    if (!blockId) return;
+    const el = document.getElementById(`preview-block-${blockId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeMatchBlockId) {
+      scrollToMatch(activeMatchBlockId);
+    }
+  }, [activeMatchBlockId, scrollToMatch]);
+
+  const handleNextMatch = () => {
+    if (totalMatches === 0) return;
+    setActiveMatchIndex((prev) => (prev + 1) % totalMatches);
+  };
+
+  const handlePrevMatch = () => {
+    if (totalMatches === 0) return;
+    setActiveMatchIndex((prev) => (prev - 1 + totalMatches) % totalMatches);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        handlePrevMatch();
+      } else {
+        handleNextMatch();
+      }
+    } else if (e.key === 'Escape') {
+      setIsSearchOpen(false);
+      setSearchQuery('');
+    }
+  };
+
+  const displayedBlocks = useMemo(() => {
+    if (filterMatchesOnly && searchQuery.trim()) {
+      return matchingBlocks;
+    }
+    return prunedBlocks;
+  }, [prunedBlocks, matchingBlocks, filterMatchesOnly, searchQuery]);
+
+  return (
+    <div className="space-y-3">
+      {/* Expandable Preview Search Bar */}
+      {isSearchOpen && (
+        <div className="sticky top-0 z-30 pt-1 pb-2 bg-[#FAF9F6]/95 dark:bg-[#1C1C17]/95 backdrop-blur-md rounded-2xl border border-[#D0E8B2] dark:border-[#3D522C] p-2 sm:p-2.5 shadow-md transition-all animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Search Input Box */}
+            <div className="flex-1 flex items-center gap-2 min-w-[180px] bg-white dark:bg-[#12140E] border border-[#E1E4D5] dark:border-[#43493E] focus-within:border-[#4A6D22] dark:focus-within:border-[#D0E8B2] px-3 py-1.5 rounded-xl transition-all">
+              <Search className="w-4 h-4 shrink-0 text-[#4A6D22] dark:text-[#D0E8B2]" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="جستجو در متن، فرمول‌ها، چک‌لیست و جدول‌های جزوه..."
+                className="w-full bg-transparent text-xs sm:text-sm text-[#1A1C16] dark:text-[#E2E3DC] placeholder-[#8F9285] outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    searchInputRef.current?.focus();
+                  }}
+                  className="p-1 rounded-lg text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                  title="پاک کردن جستجو"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Match Counter & Nav Controls */}
+            {searchQuery.trim() && (
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#EDEEEB] dark:bg-[#12140E] text-[#5E6258] dark:text-[#8F9285] flex items-center gap-1">
+                  {totalMatches > 0 ? (
+                    <>
+                      <span className="text-[#4A6D22] dark:text-[#D0E8B2] font-black">{activeMatchIndex + 1}</span>
+                      <span>از</span>
+                      <span className="font-bold">{totalMatches}</span>
+                      <span className="hidden sm:inline">مورد</span>
+                    </>
+                  ) : (
+                    <span className="text-[#A64D3B] dark:text-[#FF8A75]">نتیجه‌ای یافت نشد</span>
+                  )}
+                </span>
+
+                {totalMatches > 0 && (
+                  <div className="flex items-center gap-0.5 bg-[#EDEEEB] dark:bg-[#12140E] rounded-xl p-0.5">
+                    <button
+                      type="button"
+                      onClick={handlePrevMatch}
+                      className="p-1 rounded-lg text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-30 transition-colors"
+                      title="مورد قبلی (Shift+Enter)"
+                    >
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleNextMatch}
+                      className="p-1 rounded-lg text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-30 transition-colors"
+                      title="مورد بعدی (Enter)"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Filter mode button */}
+                <button
+                  type="button"
+                  onClick={() => setFilterMatchesOnly(!filterMatchesOnly)}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-xl text-[11px] font-bold transition-colors ${
+                    filterMatchesOnly
+                      ? 'bg-[#4A6D22] text-white shadow-xs'
+                      : 'bg-[#EDEEEB] dark:bg-[#12140E] text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10'
+                  }`}
+                  title="فقط نمایش بلوک‌های شامل عبارت جستجو"
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">فقط نتایج</span>
+                </button>
+              </div>
+            )}
+
+            {/* Close Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleSearch}
+              className="p-1.5 rounded-xl bg-[#EDEEEB] dark:bg-[#12140E] text-[#5E6258] dark:text-[#8F9285] hover:text-[#1A1C16] dark:hover:text-[#E2E3DC] hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
+              title="بستن کادر جستجو"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {title?.trim() && <h1 className="text-xl font-extrabold text-[#1A1C16] dark:text-[#E2E3DC]">{title}</h1>}
+      {summary?.trim() && (
+        <div className="p-3 rounded-2xl bg-[#EDF5E0] dark:bg-[#232F1A] border border-[#D0E8B2] dark:border-[#3D522C] text-xs text-[#4A6D22] dark:text-[#D0E8B2] leading-relaxed">
+          {summary}
+        </div>
+      )}
+
+      {/* Render Note Content with Search Highlighting */}
+      <BlockRenderer
+        blocks={displayedBlocks}
+        attachments={attachments}
+        searchQuery={searchQuery}
+        activeMatchBlockId={activeMatchBlockId}
+      />
+    </div>
+  );
+};
 
 /* ---------- Settings ---------- */
 interface SettingsPanelProps {
