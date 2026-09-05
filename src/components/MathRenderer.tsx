@@ -13,7 +13,12 @@ interface MathRendererProps {
  */
 export function preprocessLatex(latex: string): string {
   if (!latex) return '';
-  return latex.replace(
+  // Escape unescaped ampersands & if not inside \begin{ environments
+  let str = latex;
+  if (!str.includes('\\begin{')) {
+    str = str.replace(/(?<!\\)&/g, '\\&');
+  }
+  return str.replace(
     /(\\text\{[^\}]*\})|([\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+(?:\s+[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+)*)/g,
     (match, alreadyText, persianText) => {
       if (alreadyText) return alreadyText;
@@ -96,10 +101,42 @@ export function splitMathLines(formula: string): string[] {
   return result.length > 0 ? result : [text];
 }
 
+/**
+ * Normalizes input LaTeX string by converting LaTeX delimiters like \[ \] or \( \)
+ * and auto-wrapping standalone LaTeX math environments or LaTeX commands if needed.
+ */
+export function normalizeLatex(input: string): string {
+  if (!input) return '';
+  let str = input.trim();
+
+  // Convert \[ ... \] to $$ ... $$
+  str = str.replace(/\\\[([\s\S]*?)\\\]/g, '$$$$$1$$$$');
+  // Convert \( ... \) to $ ... $
+  str = str.replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$');
+
+  // If text contains \begin{...} and is not already wrapped in $ or $$
+  if (/\\begin\{[a-zA-Z0-9_*]+\}/.test(str) && !str.includes('$')) {
+    return `$$${str}$$`;
+  }
+
+  // If text contains a LaTeX command (like \text, \ge, \le, \frac, \sqrt, \sum, \int, etc.) and has no $ or $$
+  if (/\\\w{2,}/.test(str) && !str.includes('$')) {
+    if (str.includes('\\\\') || str.includes('\n') || str.startsWith('\\begin') || str.includes('\\frac')) {
+      return `$$${str}$$`;
+    }
+    return `$${str}$`;
+  }
+
+  return str;
+}
+
 export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = '' }) => {
+  // Normalize input string for various LaTeX delimiters
+  const normalizedText = useMemo(() => normalizeLatex(text), [text]);
+
   // Parse text segments: $$block math$$ or $inline math$
   const elements = useMemo(() => {
-    if (!text) return null;
+    if (!normalizedText) return null;
 
     // First split by $$ ... $$ (display mode math)
     const blockRegex = /\$\$([\s\S]*?)\$\$/g;
@@ -152,21 +189,45 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = ''
       }
 
       if (inlineLastIndex < inlineText.length) {
-        inlineParts.push(
-          <span key={`${keyPrefix}-t-end`}>
-            {inlineText.substring(inlineLastIndex)}
-          </span>
-        );
+        const remaining = inlineText.substring(inlineLastIndex);
+        // Check if remaining string is a standalone LaTeX command (e.g., \frac{a}{b} or \alpha)
+        if (/^\\[a-zA-Z]+/.test(remaining.trim())) {
+          const processed = preprocessLatex(remaining.trim());
+          try {
+            const html = katex.renderToString(processed, {
+              displayMode: false,
+              throwOnError: false,
+              strict: false,
+              output: 'htmlAndMathml',
+            });
+            inlineParts.push(
+              <span
+                key={`${keyPrefix}-m-standalone`}
+                className="inline-katex mx-1 font-sans select-all inline-block align-middle"
+                dir="ltr"
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
+            );
+          } catch {
+            inlineParts.push(<span key={`${keyPrefix}-t-end`}>{remaining}</span>);
+          }
+        } else {
+          inlineParts.push(
+            <span key={`${keyPrefix}-t-end`}>
+              {remaining}
+            </span>
+          );
+        }
       }
 
       return inlineParts;
     };
 
     let blockIdx = 0;
-    while ((match = blockRegex.exec(text)) !== null) {
+    while ((match = blockRegex.exec(normalizedText)) !== null) {
       // Process text before block
       if (match.index > lastIndex) {
-        const textBefore = text.substring(lastIndex, match.index);
+        const textBefore = normalizedText.substring(lastIndex, match.index);
         parts.push(
           <span key={`block-prev-${blockIdx}`}>
             {processInlineMath(textBefore, `pre-${blockIdx}`)}
@@ -232,16 +293,16 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = ''
       blockIdx++;
     }
 
-    if (lastIndex < text.length) {
+    if (lastIndex < normalizedText.length) {
       parts.push(
         <span key={`block-last`}>
-          {processInlineMath(text.substring(lastIndex), 'last')}
+          {processInlineMath(normalizedText.substring(lastIndex), 'last')}
         </span>
       );
     }
 
     return parts;
-  }, [text]);
+  }, [normalizedText]);
 
   return <div className={className}>{elements}</div>;
 };

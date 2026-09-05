@@ -146,7 +146,7 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                 }
               >
                 <code style={isPrint ? { color: '#0F172A', background: 'transparent' } : undefined}>
-                  <InlineText text={block.text} isPrint={isPrint} highlightQuery={searchQuery} />
+                  <InlineText text={block.text} isPrint={isPrint} highlightQuery={searchQuery} renderMath={false} />
                 </code>
               </pre>
               {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
@@ -157,7 +157,7 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
           return (
             <div className="block-wrapper relative">
               <div className="py-1 overflow-x-auto text-center relative z-10" dir="ltr">
-                <MathRenderer text={`$$${block.text}$$`} />
+                <MathRenderer text={block.text.startsWith('$') || block.text.startsWith('\\') ? block.text : `$$${block.text}$$`} />
               </div>
               {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
             </div>

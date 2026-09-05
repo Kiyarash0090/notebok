@@ -6,6 +6,7 @@ interface InlineTextProps {
   className?: string;
   isPrint?: boolean;
   highlightQuery?: string;
+  renderMath?: boolean;
 }
 
 // Helper to highlight matching text search queries
@@ -36,8 +37,12 @@ function applySearchHighlight(node: React.ReactNode, query?: string, keyPrefix =
   return node;
 }
 
-// Code spans, inline math, and HTML tags are atomic: emphasis markers inside them are literal.
-const ATOMIC_PATTERN = '(`[^`\\n]+`)|(\\$[^$\\n]+\\$)|(<mark>[\\s\\S]*?<\\/mark>)|(<code>[\\s\\S]*?<\\/code>)|(<u>[\\s\\S]*?<\\/u>)|(<del>[\\s\\S]*?<\\/del>)|(<s>[\\s\\S]*?<\\/s>)';
+// Code spans, inline/block math, environments, and HTML tags are atomic: emphasis markers inside them are literal.
+const ATOMIC_PATTERN_MATH =
+  '(`[^`\\n]+`)|(\\$\\$[\\s\\S]*?\\$\\$)|(\\\\[\\x5B\\x5D][\\s\\S]*?\\\\[\\x5B\\x5D])|(\\$[^$\\n]+\\$)|(\\\\[\\x28\\x29][\\s\\S]*?\\\\[\\x28\\x29])|(\\\\begin\\{[a-zA-Z0-9_*]+\\}[\\s\\S]*?\\\\end\\{[a-zA-Z0-9_*]+\\})|(<mark>[\\s\\S]*?<\\/mark>)|(<code>[\\s\\S]*?<\\/code>)|(<u>[\\s\\S]*?<\\/u>)|(<del>[\\s\\S]*?<\\/del>)|(<s>[\\s\\S]*?<\\/s>)';
+
+const ATOMIC_PATTERN_NO_MATH =
+  '(`[^`\\n]+`)|(<mark>[\\s\\S]*?<\\/mark>)|(<code>[\\s\\S]*?<\\/code>)|(<u>[\\s\\S]*?<\\/u>)|(<del>[\\s\\S]*?<\\/del>)|(<s>[\\s\\S]*?<\\/s>)';
 
 // Pair patterns: allow flexible content including trimmed whitespace
 // Delimiters: ==highlight==, ***bold italic***, **bold**, ~~strike~~, __underline__
@@ -158,125 +163,148 @@ const renderEmphasis = (text: string, kp: string, isPrint = false, highlightQuer
   return materialize(work, store, kp, highlightQuery);
 };
 
-// Renders markdown-ish emphasis + inline $...$ math + code + highlights
-export const InlineText: React.FC<InlineTextProps> = ({ text, className, isPrint = false, highlightQuery }) => {
+// Renders markdown-ish emphasis + LaTeX math + code + highlights
+export const InlineText: React.FC<InlineTextProps> = ({
+  text,
+  className,
+  isPrint = false,
+  highlightQuery,
+  renderMath = true,
+}) => {
   const parts = React.useMemo(() => {
     if (!text) return [];
-    const out: Array<{ key: string; node: React.ReactNode }> = [];
-    const re = new RegExp(ATOMIC_PATTERN, 'g');
-    let lastIndex = 0;
-    let i = 0;
-    let m: RegExpExecArray | null;
 
-    while ((m = re.exec(text)) !== null) {
-      if (m.index > lastIndex) {
+    const lines = text.split('\n');
+    const result: React.ReactNode[] = [];
+
+    lines.forEach((line, lineIdx) => {
+      if (lineIdx > 0) {
+        result.push(<br key={`br-${lineIdx}`} />);
+      }
+
+      if (!line) return;
+
+      // Check if line contains LaTeX math delimiters or LaTeX commands
+      const hasMathDelimiters = /[\$\\]/.test(line);
+      const hasLatexCommands = /\\\w{2,}/.test(line) || /\\\[|\\\]|\\\(|\\\)|\\begin\{/.test(line);
+
+      if (renderMath && (hasMathDelimiters || hasLatexCommands)) {
+        result.push(<MathRenderer key={`math-line-${lineIdx}`} text={line} />);
+        return;
+      }
+
+      // Render standard markdown emphasis & inline formatting
+      const out: Array<{ key: string; node: React.ReactNode }> = [];
+      const re = new RegExp(ATOMIC_PATTERN_NO_MATH, 'g');
+      let lastIndex = 0;
+      let i = 0;
+      let m: RegExpExecArray | null;
+
+      while ((m = re.exec(line)) !== null) {
+        if (m.index > lastIndex) {
+          out.push(
+            ...renderEmphasis(line.slice(lastIndex, m.index), `t${lineIdx}-${i}`, isPrint, highlightQuery).map((node, k) => ({
+              key: `p${lineIdx}-${i}-${k}`,
+              node,
+            }))
+          );
+          i += 1;
+        }
+
+        const token = m[0];
+
+        if (token.startsWith('`')) {
+          // Inline Code `...`
+          const codeContent = token.slice(1, -1);
+          out.push({
+            key: `c${lineIdx}-${i++}`,
+            node: (
+              <code
+                className="px-1.5 py-0.5 rounded-md bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#E2E8F0] border border-[#CBD5E1] dark:border-[#475569] font-mono text-[0.88em] shadow-[0_1px_1px_rgba(0,0,0,0.03)] print:bg-[#F1F5F9] print:text-[#0F172A] print:border-[#CBD5E1]"
+                style={{
+                  backgroundColor: isPrint ? '#F1F5F9' : undefined,
+                  color: isPrint ? '#0F172A' : undefined,
+                  borderColor: isPrint ? '#CBD5E1' : undefined,
+                  WebkitPrintColorAdjust: 'exact',
+                  printColorAdjust: 'exact',
+                }}
+                data-mark="code"
+              >
+                {applySearchHighlight(codeContent, highlightQuery, `ic${lineIdx}-${i}`)}
+              </code>
+            ),
+          });
+        } else if (token.startsWith('<mark>')) {
+          const inner = token.replace(/^<mark>|<\/mark>$/gi, '');
+          out.push({
+            key: `hm${lineIdx}-${i++}`,
+            node: (
+              <mark
+                className="px-1 py-0.5 rounded bg-[#FEF08A] dark:bg-[#EAB308]/40 text-[#1A1C16] dark:text-[#FEF9C3] font-medium border border-[#FACC15]/70 print:bg-[#FEF08A] print:text-[#1A1C16] print:border-[#FACC15]"
+                style={{
+                  backgroundColor: isPrint ? '#FEF08A' : undefined,
+                  color: isPrint ? '#1A1C16' : undefined,
+                  borderColor: isPrint ? '#FACC15' : undefined,
+                  WebkitPrintColorAdjust: 'exact',
+                  printColorAdjust: 'exact',
+                }}
+                data-mark="highlight"
+              >
+                {applySearchHighlight(inner, highlightQuery, `hm${lineIdx}-${i}`)}
+              </mark>
+            ),
+          });
+        } else if (token.startsWith('<code>')) {
+          const inner = token.replace(/^<code>|<\/code>$/gi, '');
+          out.push({
+            key: `hc${lineIdx}-${i++}`,
+            node: (
+              <code
+                className="px-1.5 py-0.5 rounded-md bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#E2E8F0] border border-[#CBD5E1] dark:border-[#475569] font-mono text-[0.88em] print:bg-[#F1F5F9] print:text-[#0F172A] print:border-[#CBD5E1]"
+                style={{
+                  backgroundColor: isPrint ? '#F1F5F9' : undefined,
+                  color: isPrint ? '#0F172A' : undefined,
+                  borderColor: isPrint ? '#CBD5E1' : undefined,
+                  WebkitPrintColorAdjust: 'exact',
+                  printColorAdjust: 'exact',
+                }}
+                data-mark="code"
+              >
+                {applySearchHighlight(inner, highlightQuery, `hc${lineIdx}-${i}`)}
+              </code>
+            ),
+          });
+        } else if (token.startsWith('<u>')) {
+          const inner = token.replace(/^<u>|<\/u>$/gi, '');
+          out.push({
+            key: `hu${lineIdx}-${i++}`,
+            node: <u className="underline underline-offset-2">{applySearchHighlight(inner, highlightQuery, `hu${lineIdx}-${i}`)}</u>,
+          });
+        } else if (token.startsWith('<del>') || token.startsWith('<s>')) {
+          const inner = token.replace(/^<(del|s)>|<\/(del|s)>$/gi, '');
+          out.push({
+            key: `hd${lineIdx}-${i++}`,
+            node: <del className="line-through text-[#8F9285] print:text-[#64748B]">{applySearchHighlight(inner, highlightQuery, `hd${lineIdx}-${i}`)}</del>,
+          });
+        }
+
+        lastIndex = re.lastIndex;
+      }
+
+      if (lastIndex < line.length) {
         out.push(
-          ...renderEmphasis(text.slice(lastIndex, m.index), `t${i}`, isPrint, highlightQuery).map((node, k) => ({
-            key: `p${i}-${k}`,
+          ...renderEmphasis(line.slice(lastIndex), `t${lineIdx}-${i}`, isPrint, highlightQuery).map((node, k) => ({
+            key: `p${lineIdx}-${i}-${k}`,
             node,
           }))
         );
-        i += 1;
       }
 
-      const token = m[0];
+      result.push(...out.map((o) => o.node));
+    });
 
-      if (token.startsWith('$')) {
-        // Inline Math
-        out.push({ key: `m${i++}`, node: <MathRenderer text={token} /> });
-      } else if (token.startsWith('`')) {
-        // Inline Code `...`
-        const codeContent = token.slice(1, -1);
-        out.push({
-          key: `c${i++}`,
-          node: (
-            <code
-              className="px-1.5 py-0.5 rounded-md bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#E2E8F0] border border-[#CBD5E1] dark:border-[#475569] font-mono text-[0.88em] shadow-[0_1px_1px_rgba(0,0,0,0.03)] print:bg-[#F1F5F9] print:text-[#0F172A] print:border-[#CBD5E1]"
-              style={{
-                backgroundColor: isPrint ? '#F1F5F9' : undefined,
-                color: isPrint ? '#0F172A' : undefined,
-                borderColor: isPrint ? '#CBD5E1' : undefined,
-                WebkitPrintColorAdjust: 'exact',
-                printColorAdjust: 'exact',
-              }}
-              data-mark="code"
-            >
-              {applySearchHighlight(codeContent, highlightQuery, `ic${i}`)}
-            </code>
-          ),
-        });
-      } else if (token.startsWith('<mark>')) {
-        // HTML <mark>...</mark>
-        const inner = token.replace(/^<mark>|<\/mark>$/gi, '');
-        out.push({
-          key: `hm${i++}`,
-          node: (
-            <mark
-              className="px-1 py-0.5 rounded bg-[#FEF08A] dark:bg-[#EAB308]/40 text-[#1A1C16] dark:text-[#FEF9C3] font-medium border border-[#FACC15]/70 print:bg-[#FEF08A] print:text-[#1A1C16] print:border-[#FACC15]"
-              style={{
-                backgroundColor: isPrint ? '#FEF08A' : undefined,
-                color: isPrint ? '#1A1C16' : undefined,
-                borderColor: isPrint ? '#FACC15' : undefined,
-                WebkitPrintColorAdjust: 'exact',
-                printColorAdjust: 'exact',
-              }}
-              data-mark="highlight"
-            >
-              {applySearchHighlight(inner, highlightQuery, `hm${i}`)}
-            </mark>
-          ),
-        });
-      } else if (token.startsWith('<code>')) {
-        // HTML <code>...</code>
-        const inner = token.replace(/^<code>|<\/code>$/gi, '');
-        out.push({
-          key: `hc${i++}`,
-          node: (
-            <code
-              className="px-1.5 py-0.5 rounded-md bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#E2E8F0] border border-[#CBD5E1] dark:border-[#475569] font-mono text-[0.88em] print:bg-[#F1F5F9] print:text-[#0F172A] print:border-[#CBD5E1]"
-              style={{
-                backgroundColor: isPrint ? '#F1F5F9' : undefined,
-                color: isPrint ? '#0F172A' : undefined,
-                borderColor: isPrint ? '#CBD5E1' : undefined,
-                WebkitPrintColorAdjust: 'exact',
-                printColorAdjust: 'exact',
-              }}
-              data-mark="code"
-            >
-              {applySearchHighlight(inner, highlightQuery, `hc${i}`)}
-            </code>
-          ),
-        });
-      } else if (token.startsWith('<u>')) {
-        // HTML <u>...</u>
-        const inner = token.replace(/^<u>|<\/u>$/gi, '');
-        out.push({
-          key: `hu${i++}`,
-          node: <u className="underline underline-offset-2">{applySearchHighlight(inner, highlightQuery, `hu${i}`)}</u>,
-        });
-      } else if (token.startsWith('<del>') || token.startsWith('<s>')) {
-        // HTML <del> / <s>
-        const inner = token.replace(/^<(del|s)>|<\/(del|s)>$/gi, '');
-        out.push({
-          key: `hd${i++}`,
-          node: <del className="line-through text-[#8F9285] print:text-[#64748B]">{applySearchHighlight(inner, highlightQuery, `hd${i}`)}</del>,
-        });
-      }
-
-      lastIndex = re.lastIndex;
-    }
-
-    if (lastIndex < text.length) {
-      out.push(
-        ...renderEmphasis(text.slice(lastIndex), `t${i}`, isPrint, highlightQuery).map((node, k) => ({
-          key: `p${i}-${k}`,
-          node,
-        }))
-      );
-    }
-
-    return out.map((o) => o.node);
-  }, [text, isPrint, highlightQuery]);
+    return result;
+  }, [text, isPrint, highlightQuery, renderMath]);
 
   return <span className={className}>{parts}</span>;
 };

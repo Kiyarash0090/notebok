@@ -1,5 +1,6 @@
 import React from 'react';
 import { ShapeConfig, ShapeKind } from '../../types';
+import { InlineText } from './InlineText';
 
 interface ShapeSvgProps {
   shape?: ShapeConfig;
@@ -616,7 +617,7 @@ export const ShapeSvg: React.FC<ShapeSvgProps> = ({
             }}
           >
             {innerText.trim() !== '' ? (
-              innerText
+              <InlineText text={innerText} />
             ) : (
               kind === 'textbox' && (
                 <span className="opacity-40 text-xs italic font-normal">
