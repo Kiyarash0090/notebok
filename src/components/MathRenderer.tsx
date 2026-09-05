@@ -13,8 +13,11 @@ interface MathRendererProps {
  */
 export function preprocessLatex(latex: string): string {
   if (!latex) return '';
-  // Escape unescaped ampersands & if not inside \begin{ environments
   let str = latex;
+  // Convert double backslash before commands (e.g. \\leftarrow) to single backslash \leftarrow
+  str = str.replace(/\\\\([a-zA-Z]+)/g, '\\$1');
+
+  // Escape unescaped ampersands & if not inside \begin{ environments
   if (!str.includes('\\begin{')) {
     str = str.replace(/(?<!\\)&/g, '\\&');
   }
@@ -87,8 +90,8 @@ export function splitMathLines(formula: string): string[] {
     if (!block) continue;
 
     if (!block.includes('\\begin{')) {
-      // Split on double backslash \\ outside environments
-      const subLines = block.split(/(?<!\\)\\\\(?:\[[^\]]*\])?/);
+      // Split on double backslash \\ outside environments (unless followed by a command name)
+      const subLines = block.split(/(?<!\\)\\\\(?![a-zA-Z])(?:\[[^\]]*\])?/);
       for (const s of subLines) {
         const trimmed = s.trim();
         if (trimmed) result.push(trimmed);
