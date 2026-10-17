@@ -19,6 +19,7 @@ import {
   X,
   Send,
   FolderOpen,
+  Presentation,
 } from 'lucide-react';
 import { Category, ViewFilter } from '../types';
 import {
@@ -35,9 +36,10 @@ interface SidebarProps {
   selectedCategory: string | null;
   onSelectFilter: (filter: ViewFilter, categoryId?: string) => void;
   categories: Category[];
-  onOpenCategoryManager: () => void;
+  onOpenCategoryManager: (initialParentId?: string | null) => void;
   onOpenBackup: () => void;
   onOpenTelegramStorage?: () => void;
+  onOpenSlideshow?: (categoryId?: string | null) => void;
   counts: {
     all: number;
     important: number;
@@ -75,6 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenCategoryManager,
   onOpenBackup,
   onOpenTelegramStorage,
+  onOpenSlideshow,
   counts,
   categoryCounts,
 }) => {
@@ -189,6 +192,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             </div>
           </button>
+
+          {/* Slideshow Action Button (as sibling, avoiding button nesting) */}
+          {onOpenSlideshow && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSlideshow(cat.id);
+                onClose();
+              }}
+              title={`مرور اسلایدشو برای «${cat.name}»`}
+              className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1.5 ml-1.5 rounded-lg hover:bg-black/10 dark:hover:bg-white/10 text-[#4A6D22] dark:text-[#D0E8B2] transition-opacity cursor-pointer shrink-0"
+            >
+              <Presentation className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         {/* Render child subcategories recursively if expanded */}
@@ -289,6 +308,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {counts.checklists}
               </span>
             </button>
+
+            {onOpenSlideshow && (
+              <button
+                id="sidebar-exam-slideshow"
+                onClick={() => {
+                  onOpenSlideshow(selectedCategory);
+                  onClose();
+                }}
+                className={navItemClass(false)}
+              >
+                <div className="flex items-center gap-3">
+                  <Presentation className="w-4 h-4 shrink-0 text-[#4A6D22] dark:text-[#D0E8B2]" />
+                  <span className="font-medium">مرور امتحانی (اسلایدشو)</span>
+                </div>
+                <span className="text-[10px] bg-[#D0E8B2]/40 dark:bg-[#1A3700]/70 text-[#1A3700] dark:text-[#D0E8B2] px-2 py-0.5 rounded-full font-bold">
+                  آزمون
+                </span>
+              </button>
+            )}
           </div>
 
           {/* Subjects / Categories Tree Section */}
@@ -299,7 +337,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
               <button
                 id="btn-manage-categories"
-                onClick={onOpenCategoryManager}
+                onClick={() => onOpenCategoryManager()}
                 className="text-[11px] text-[#4A6D22] dark:text-[#D0E8B2] hover:underline font-bold flex items-center gap-1"
               >
                 <FolderPlus className="w-3.5 h-3.5" />

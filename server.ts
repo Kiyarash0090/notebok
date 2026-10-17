@@ -185,23 +185,73 @@ function readDB(): DBStructure {
 
 // Write DB helper — atomic write so a crash mid-write can't truncate the database
 let dbSyncTimer: any = null;
+let lastSyncedDataHash = '';
 
-function writeDB(db: DBStructure): boolean {
+function computeDataHash(db: DBStructure): string {
+  // Hash only notes & categories content (omit drafts and timestamps)
+  const notesCore = (db.notes || []).map((n) => ({
+    id: n.id,
+    title: n.title,
+    content: n.content,
+    updatedAt: n.updatedAt,
+    isTrash: n.isTrash,
+    isArchived: n.isArchived,
+    isPinned: n.isPinned,
+    isImportant: n.isImportant,
+    importanceLevel: n.importanceLevel,
+    color: n.color,
+    tags: n.tags,
+    blocks: n.blocks,
+    checklists: n.checklists,
+    attachments: n.attachments?.map((a: any) => a.id),
+  }));
+  const categoriesCore = (db.categories || []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    color: c.color,
+    parentId: c.parentId,
+  }));
+  return crypto.createHash('sha256').update(JSON.stringify({ notesCore, categoriesCore })).digest('hex');
+}
+
+function writeDB(db: DBStructure, options: { skipTelegramSync?: boolean } = {}): boolean {
   try {
     db.lastUpdated = new Date().toISOString();
     const tmp = `${DB_FILE}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf-8');
     fs.renameSync(tmp, DB_FILE);
 
+    // If skipTelegramSync is requested (e.g. for autosaving drafts), do not trigger Telegram sync
+    if (options.skipTelegramSync) {
+      return true;
+    }
+
     // Asynchronously sync to Telegram Cloud if enabled
     const tgConfig = getTelegramConfig();
     if (tgConfig.enabled && tgConfig.autoSyncDb && tgConfig.chatId) {
+      const currentHash = computeDataHash(db);
+      if (currentHash === lastSyncedDataHash) {
+        // Data has not meaningfully changed since last successful sync, skip!
+        return true;
+      }
+
       if (dbSyncTimer) clearTimeout(dbSyncTimer);
+      // Debounce: wait 20 seconds of user inactivity before uploading to Telegram
       dbSyncTimer = setTimeout(() => {
-        syncDbToTelegram(db).catch((err) => {
-          console.error('Background Telegram DB sync error:', err.message);
-        });
-      }, 5000); // 5 seconds debounce
+        dbSyncTimer = null;
+        const freshDb = readDB();
+        const freshHash = computeDataHash(freshDb);
+        syncDbToTelegram(freshDb)
+          .then(() => {
+            lastSyncedDataHash = freshHash;
+          })
+          .catch((err) => {
+            console.error('Background Telegram DB sync error:', err.message);
+          });
+      }, 20000); // 20s debounce
+      if (dbSyncTimer && typeof dbSyncTimer.unref === 'function') {
+        dbSyncTimer.unref();
+      }
     }
 
     return true;
@@ -725,7 +775,7 @@ app.put('/api/drafts/:key', (req, res) => {
     payload: buildNote(req.body || {}),
   };
 
-  if (!writeDB(db)) {
+  if (!writeDB(db, { skipTelegramSync: true })) {
     return res.status(500).json({ success: false, error: 'خطا در ذخیره پیش‌نویس' });
   }
   res.json({ success: true, savedAt: db.drafts[req.params.key].savedAt });
@@ -735,7 +785,7 @@ app.delete('/api/drafts/:key', (req, res) => {
   const db = readDB();
   if (db.drafts?.[req.params.key]) {
     delete db.drafts[req.params.key];
-    writeDB(db);
+    writeDB(db, { skipTelegramSync: true });
   }
   res.json({ success: true });
 });
@@ -929,7 +979,14 @@ app.post('/api/telegram/sync-db', async (req, res) => {
   try {
     const db = readDB();
     const result = await syncDbToTelegram(db);
-    res.json({ success: true, message: 'دیتابیس با موفقیت به تلگرام منتقل شد', result });
+    lastSyncedDataHash = computeDataHash(db);
+    res.json({
+      success: true,
+      message: result.edited
+        ? 'فایل بک‌آپ قبلی در کانال تلگرام با موفقیت ویرایش و با آخرین تغییرات جایگزین شد.'
+        : 'دیتابیس با موفقیت به کانال تلگرام ارسال شد.',
+      result,
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1098,7 +1155,7 @@ app.get('/api/categories', (req, res) => {
 
 app.post('/api/categories', (req, res) => {
   const db = readDB();
-  const { name, color, icon, description, parentId } = req.body;
+  const { name, color, icon, description, parentId, subcategories } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ success: false, error: 'نام دسته‌بندی الزامی است' });
   }
@@ -1115,17 +1172,63 @@ app.post('/api/categories', (req, res) => {
   const newCat = {
     id: `cat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     name: name.trim(),
-    color: color || '#1a73e8',
+    color: color || '#4A6D22',
     icon: icon || 'Folder',
     description: description || '',
     parentId: validParentId,
     createdAt: new Date().toISOString(),
   };
 
-  db.categories.push(newCat);
+  const createdList = [newCat];
+
+  // If subcategories were provided simultaneously
+  if (Array.isArray(subcategories) && subcategories.length > 0) {
+    subcategories.forEach((sub: any, idx: number) => {
+      const subName = typeof sub === 'string' ? sub.trim() : (sub?.name || '').trim();
+      if (!subName) return;
+      const subCat = {
+        id: `cat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${idx + 1}`,
+        name: subName,
+        color: (typeof sub === 'object' && sub?.color) ? sub.color : (color || '#4A6D22'),
+        icon: (typeof sub === 'object' && sub?.icon) ? sub.icon : 'Folder',
+        description: '',
+        parentId: newCat.id,
+        createdAt: new Date().toISOString(),
+      };
+      createdList.push(subCat);
+    });
+  }
+
+  db.categories.push(...createdList);
   writeDB(db);
 
-  res.status(201).json({ success: true, category: newCat });
+  res.status(201).json({ success: true, category: newCat, createdCategories: createdList });
+});
+
+app.put('/api/categories/reorder', (req, res) => {
+  const db = readDB();
+  const { orderedIds } = req.body;
+  if (!Array.isArray(orderedIds)) {
+    return res.status(400).json({ success: false, error: 'شناسه‌های ارسالی معتبر نیستند' });
+  }
+
+  const catMap = new Map(db.categories.map((c) => [c.id, c]));
+  const reordered: typeof db.categories = [];
+
+  for (const id of orderedIds) {
+    const cat = catMap.get(id);
+    if (cat) {
+      reordered.push(cat);
+      catMap.delete(id);
+    }
+  }
+  for (const cat of catMap.values()) {
+    reordered.push(cat);
+  }
+
+  db.categories = reordered;
+  writeDB(db);
+  res.json({ success: true, categories: db.categories });
 });
 
 app.put('/api/categories/:id', (req, res) => {

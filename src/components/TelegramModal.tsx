@@ -331,8 +331,11 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({ isOpen, onClose, o
                     onChange={(e) => setConfig({ ...config, autoSyncDb: e.target.checked })}
                     className="w-4 h-4 text-[#0088cc] rounded border-[#E1E4D5] dark:border-[#43493E] focus:ring-[#0088cc]"
                   />
-                  <label htmlFor="chk-auto-sync-db" className="text-xs text-[#43493E] dark:text-[#E2E3DC] cursor-pointer">
-                    همگام‌سازی خودکار دیتابیس با هر تغییر در یادداشت‌ها (ذخیره‌سازی بک‌آپ خودکار در کانال)
+                  <label htmlFor="chk-auto-sync-db" className="text-xs text-[#43493E] dark:text-[#E2E3DC] cursor-pointer flex-1">
+                    <span className="font-semibold block">همگام‌سازی خودکار هوشمند دیتابیس در تلگرام</span>
+                    <span className="text-[11px] text-[#5E6258] dark:text-[#8F9285] block mt-0.5 leading-relaxed">
+                      همیشه جدیدترین نسخه پشتیبان را در همان فایل/پیام قبلی کانال ویرایش و جایگزین می‌کند تا چت کانال شلوغ نشود. پیش‌نویس‌های حین تایپ به تلگرام ارسال نمی‌شوند و اتصال پس از ۲۵ ثانیه برای صفر شدن مصرف منابع قطع می‌گردد.
+                    </span>
                   </label>
                 </div>
               </div>

@@ -80,6 +80,50 @@ function saveSession(sessionStr: string): void {
 
 let activeClient: TelegramClient | null = null;
 let activeClientConfigKey = '';
+let activeClientConnected = false;
+let idleDisconnectTimer: NodeJS.Timeout | null = null;
+const IDLE_TIMEOUT_MS = 25000; // 25 seconds of inactivity closes connection to free 100% resources
+
+export function resetTelegramIdleTimer(): void {
+  if (idleDisconnectTimer) {
+    clearTimeout(idleDisconnectTimer);
+    idleDisconnectTimer = null;
+  }
+  idleDisconnectTimer = setTimeout(async () => {
+    idleDisconnectTimer = null;
+    if (activeClient) {
+      try {
+        console.log('Telegram MTProto client idle: disconnecting to save 100% server resources.');
+        await activeClient.disconnect();
+      } catch (err: any) {
+        console.warn('Error during Telegram idle disconnect:', err.message);
+      } finally {
+        activeClient = null;
+        activeClientConnected = false;
+        activeClientConfigKey = '';
+      }
+    }
+  }, IDLE_TIMEOUT_MS);
+
+  if (idleDisconnectTimer && typeof idleDisconnectTimer.unref === 'function') {
+    idleDisconnectTimer.unref();
+  }
+}
+
+export async function disconnectTelegramClient(): Promise<void> {
+  if (idleDisconnectTimer) {
+    clearTimeout(idleDisconnectTimer);
+    idleDisconnectTimer = null;
+  }
+  if (activeClient) {
+    try {
+      await activeClient.disconnect();
+    } catch {}
+    activeClient = null;
+    activeClientConnected = false;
+    activeClientConfigKey = '';
+  }
+}
 
 export async function getTelegramClient(customConfig?: TelegramConfig): Promise<TelegramClient> {
   const cfg = customConfig || getTelegramConfig();
@@ -89,6 +133,7 @@ export async function getTelegramClient(customConfig?: TelegramConfig): Promise<
 
   const configKey = `${cfg.apiId}_${cfg.apiHash}_${cfg.botToken}`;
   if (activeClient && activeClientConnected && activeClientConfigKey === configKey) {
+    resetTelegramIdleTimer();
     return activeClient;
   }
 
@@ -121,10 +166,9 @@ export async function getTelegramClient(customConfig?: TelegramConfig): Promise<
   activeClientConnected = true;
   activeClientConfigKey = configKey;
 
+  resetTelegramIdleTimer();
   return client;
 }
-
-let activeClientConnected = false;
 
 /**
   Test connection to Telegram and send a ping message to the specified chatId
@@ -135,6 +179,7 @@ export async function testTelegramConnection(cfg: TelegramConfig): Promise<{ suc
     const me = await client.getMe();
     
     if (!cfg.chatId) {
+      resetTelegramIdleTimer();
       return {
         success: true,
         message: `اتصال موفقیت‌آمیز بود! ربات متصل شد: @${(me as any)?.username || 'Bot'} (نکته: شناسه چت/کانال را وارد کنید تا تست ارسال نیز انجام شود).`,
@@ -146,12 +191,14 @@ export async function testTelegramConnection(cfg: TelegramConfig): Promise<{ suc
       message: `🟢 **تست اتصال NIVRA**\nاتصال موفقیت‌آمیز به ابَر-فضای ابری تلگرام با MTProto در تاریخ ${new Date().toLocaleString('fa-IR')}`,
     });
 
+    resetTelegramIdleTimer();
     return {
       success: true,
       message: `اتصال به تلگرام و ارسال پیام به چت/کانال با موفقیت انجام شد! (شناسه پیام: ${result.id})`,
     };
   } catch (err: any) {
     console.error('Telegram test connection error:', err);
+    resetTelegramIdleTimer();
     return {
       success: false,
       message: err.message || 'خطا در برقرار ارتباط با تلگرام',
@@ -182,6 +229,8 @@ export async function uploadFileToTelegram(
     workers: 4,
   });
 
+  resetTelegramIdleTimer();
+
   return {
     messageId: sentMessage.id,
     size: buffer.length,
@@ -202,11 +251,14 @@ export async function downloadFileFromTelegram(messageId: number): Promise<{ buf
 
   const messages = await client.getMessages(cfg.chatId, { ids: [messageId] });
   if (!messages || messages.length === 0 || !messages[0] || !messages[0].media) {
+    resetTelegramIdleTimer();
     throw new Error(`فایل مربوط به پیام ID=${messageId} در تلگرام یافت نشد.`);
   }
 
   const msg = messages[0];
   const downloaded = await client.downloadMedia(msg.media, {});
+
+  resetTelegramIdleTimer();
 
   if (!downloaded) {
     throw new Error('خطا در دانلود رسانه از تلگرام');
@@ -224,33 +276,75 @@ export async function downloadFileFromTelegram(messageId: number): Promise<{ buf
 }
 
 /**
-  Sync the JSON database (notes_db.json) directly to Telegram Cloud Channel
+  Sync the JSON database (notes_db.json) directly to Telegram Cloud Channel.
+  Edits the existing backup message in-place to keep the channel clean and prevent flooding!
  */
-export async function syncDbToTelegram(dbData: any): Promise<{ messageId: number }> {
+export async function syncDbToTelegram(dbData: any): Promise<{ messageId: number; edited: boolean }> {
   const cfg = getTelegramConfig();
   if (!cfg.enabled || !cfg.chatId) {
-    throw new Error('اتصال به تلگرام فعال نیست.');
+    throw new Error('اتصال به تلگرام فعال نیست یا شناسه چت/کانال تنظیم نشده است.');
   }
 
   const client = await getTelegramClient(cfg);
-  const jsonStr = JSON.stringify(dbData, null, 2);
+
+  // Clean dbData for backup: omit internal drafts to keep file clean & lean
+  const cleanDb = {
+    version: dbData.version || 2,
+    notes: dbData.notes || [],
+    categories: dbData.categories || [],
+    lastUpdated: dbData.lastUpdated || new Date().toISOString(),
+  };
+
+  const jsonStr = JSON.stringify(cleanDb, null, 2);
   const buffer = Buffer.from(jsonStr, 'utf-8');
 
-  const filename = `notes_db_sync_${Date.now()}.json`;
+  const filename = `notes_db_backup.json`;
   const fileToUpload = new CustomFile(filename, buffer.length, '', buffer);
+  const caption = `💾 **[NIVRA_DB_SYNC]**\n📊 تعداد یادداشت‌ها: ${cleanDb.notes.length}\n📁 تعداد دسته‌ها: ${cleanDb.categories.length}\n🕒 آخرین به‌روزرسانی: ${new Date().toLocaleString('fa-IR')}`;
 
-  const sent = await client.sendFile(cfg.chatId, {
-    file: fileToUpload,
-    caption: `💾 **[NIVRA_DB_SYNC]**\n📊 تعداد یادداشت‌ها: ${dbData.notes?.length || 0}\n📁 تعداد دسته‌ها: ${dbData.categories?.length || 0}\n🕒 زمان همگام‌سازی: ${new Date().toLocaleString('fa-IR')}`,
-    workers: 2,
-  });
+  let targetMessageId = cfg.lastSyncMessageId;
+  let didEdit = false;
+
+  // 1. If we have a previously synced message ID, try to edit it in-place
+  if (targetMessageId) {
+    try {
+      await client.editMessage(cfg.chatId, {
+        message: targetMessageId,
+        file: fileToUpload,
+        text: caption,
+      });
+      didEdit = true;
+    } catch (editErr: any) {
+      console.warn('Could not edit previous Telegram backup message in-place, falling back to clean replace:', editErr.message);
+      // Try to delete the old message so the channel doesn't stay cluttered
+      try {
+        await client.deleteMessages(cfg.chatId, [targetMessageId], { revoke: true });
+      } catch {
+        // ignore if cannot delete
+      }
+      targetMessageId = undefined;
+    }
+  }
+
+  // 2. If no previous message or edit failed, send as a new file message
+  if (!targetMessageId) {
+    const sent = await client.sendFile(cfg.chatId, {
+      file: fileToUpload,
+      caption,
+      forceDocument: true,
+      workers: 2,
+    });
+    targetMessageId = sent.id;
+  }
 
   // Save last sync time & message ID
   cfg.lastSyncAt = new Date().toISOString();
-  cfg.lastSyncMessageId = sent.id;
+  cfg.lastSyncMessageId = targetMessageId;
   saveTelegramConfig(cfg);
 
-  return { messageId: sent.id };
+  resetTelegramIdleTimer();
+
+  return { messageId: targetMessageId, edited: didEdit };
 }
 
 /**
@@ -342,6 +436,8 @@ export async function restoreDbFromTelegram(): Promise<{ db: any; messageId: num
   // Update cfg with found message ID
   cfg.lastSyncMessageId = targetMsg.id;
   saveTelegramConfig(cfg);
+
+  resetTelegramIdleTimer();
 
   return { db: parsed, messageId: targetMsg.id };
 }

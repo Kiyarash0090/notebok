@@ -320,7 +320,14 @@ export const api = {
     return data.categories || [];
   },
 
-  async createCategory(cat: { name: string; color?: string; icon?: string; description?: string; parentId?: string | null }): Promise<Category> {
+  async createCategory(cat: {
+    name: string;
+    color?: string;
+    icon?: string;
+    description?: string;
+    parentId?: string | null;
+    subcategories?: string[];
+  }): Promise<{ category: Category; createdCategories: Category[] }> {
     const res = await fetch('/api/categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -331,7 +338,10 @@ export const api = {
       throw new Error(err.error || 'خطا در ایجاد دسته‌بندی');
     }
     const data = await res.json();
-    return data.category;
+    const createdList: Category[] = Array.isArray(data.createdCategories) && data.createdCategories.length > 0
+      ? data.createdCategories
+      : [data.category];
+    return { category: data.category, createdCategories: createdList };
   },
 
   async updateCategory(id: string, updates: Partial<Category>): Promise<Category> {
@@ -348,6 +358,17 @@ export const api = {
   async deleteCategory(id: string): Promise<void> {
     const res = await fetch(`/api/categories/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('خطا در حذف دسته‌بندی');
+  },
+
+  async reorderCategories(orderedIds: string[]): Promise<Category[]> {
+    const res = await fetch('/api/categories/reorder', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderedIds }),
+    });
+    if (!res.ok) throw new Error('خطا در ذخیره ترتیب دسته‌بندی‌ها');
+    const data = await res.json();
+    return data.categories || [];
   },
 
   // Backup & Restore

@@ -13,6 +13,7 @@ import {
   Layers,
   Inbox,
   ShieldCheck,
+  Presentation,
 } from 'lucide-react';
 import { Note, Category, ViewFilter, ThemeMode, ImportanceLevel } from './types';
 import { api } from './services/api';
@@ -27,6 +28,8 @@ import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { AdvancedSearchModal, AdvancedSearchFilters } from './components/AdvancedSearchModal';
 import { TelegramModal } from './components/TelegramModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { FloatingCategoryTabs } from './components/FloatingCategoryTabs';
+import { NoteSlideshowModal } from './components/NoteSlideshowModal';
 import { getCategoryDescendantIds, getCategoryPathString } from './lib/categoryUtils';
 import { useBackButton } from './lib/useBackButton';
 
@@ -87,8 +90,21 @@ export default function App() {
   const [editorInitialMode, setEditorInitialMode] = useState<'edit' | 'preview'>('edit');
   const [printNote, setPrintNote] = useState<Note | null>(null);
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
+  const [categoryManagerInitialParentId, setCategoryManagerInitialParentId] = useState<string | null>(null);
+
+  const handleOpenCategoryManager = (parentId?: string | null) => {
+    setCategoryManagerInitialParentId(parentId || null);
+    setIsCategoryManagerOpen(true);
+  };
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
+  const [isSlideshowOpen, setIsSlideshowOpen] = useState(false);
+  const [slideshowCategoryId, setSlideshowCategoryId] = useState<string | null>(null);
+
+  const handleOpenSlideshow = (catId?: string | null) => {
+    setSlideshowCategoryId(catId !== undefined ? catId : (selectedCategory || null));
+    setIsSlideshowOpen(true);
+  };
 
   // Register all App-level overlays, modals, and views with mobile back button stack
   useBackButton(isSidebarOpen, () => setIsSidebarOpen(false), 'app-sidebar');
@@ -97,6 +113,7 @@ export default function App() {
   useBackButton(isBackupModalOpen, () => setIsBackupModalOpen(false), 'app-backup-modal');
   useBackButton(isAdvancedSearchOpen, () => setIsAdvancedSearchOpen(false), 'app-advanced-search');
   useBackButton(isTelegramModalOpen, () => setIsTelegramModalOpen(false), 'app-telegram-modal');
+  useBackButton(isSlideshowOpen, () => setIsSlideshowOpen(false), 'app-slideshow-modal');
   useBackButton(!!printNote, () => setPrintNote(null), 'app-print-note');
 
   // Navigation state back handlers (clear filter/search before leaving)
@@ -111,6 +128,7 @@ export default function App() {
     isBackupModalOpen ||
     isAdvancedSearchOpen ||
     isTelegramModalOpen ||
+    isSlideshowOpen ||
     !!printNote;
 
   // Lock the background page scroll while any overlay/popup is open so the
@@ -422,11 +440,20 @@ export default function App() {
   // Handlers for Categories
   const handleCreateCategory = async (catData: any) => {
     try {
-      const created = await api.createCategory(catData);
-      setCategories((prev) => [...prev, created]);
-      showToast('دسته‌بندی جدید ایجاد شد');
+      const result = await api.createCategory(catData);
+      const toAdd = result.createdCategories && result.createdCategories.length > 0
+        ? result.createdCategories
+        : [result.category];
+      setCategories((prev) => [...prev, ...toAdd]);
+      if (toAdd.length > 1) {
+        showToast(`پوشه "${result.category.name}" به همراه ${toAdd.length - 1} زیرمجموعه ایجاد شد`);
+      } else {
+        showToast('دسته‌بندی جدید ایجاد شد');
+      }
+      return result.category;
     } catch (err: any) {
       showToast(err.message || 'خطا در ایجاد دسته', 'error');
+      throw err;
     }
   };
 
@@ -452,6 +479,23 @@ export default function App() {
       loadData();
     } catch (err: any) {
       showToast(err.message, 'error');
+    }
+  };
+
+  const handleReorderCategories = async (newCategories: Category[]) => {
+    setCategories(newCategories);
+    try {
+      const saved = await api.reorderCategories(newCategories.map((c) => c.id));
+      setCategories(saved);
+    } catch (err: any) {
+      console.error(err);
+      showToast('خطا در ذخیره ترتیب دسته‌بندی‌ها', 'error');
+      try {
+        const fetched = await api.getCategories();
+        setCategories(fetched);
+      } catch {
+        // ignore fallback error
+      }
     }
   };
 
@@ -505,18 +549,44 @@ export default function App() {
             setSearchQuery('');
           }}
           categories={categories}
-          onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
+          onOpenCategoryManager={handleOpenCategoryManager}
           onOpenBackup={() => setIsBackupModalOpen(true)}
           onOpenTelegramStorage={() => setIsTelegramModalOpen(true)}
+          onOpenSlideshow={handleOpenSlideshow}
           counts={counts}
           categoryCounts={categoryCounts}
         />
 
         {/* Center Content Area */}
-        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 overflow-x-hidden pb-24 lg:pb-12">
+        <main className="flex-1 min-w-0 px-3 sm:px-6 lg:px-8 py-3 sm:py-6 pb-24 lg:pb-12">
+          {/* Floating Category Tabs Bar with Subcategories Drawer */}
+          {currentFilter !== 'trash' && currentFilter !== 'archive' && (
+            <FloatingCategoryTabs
+              categories={categories}
+              selectedCategory={selectedCategory}
+              currentFilter={currentFilter}
+              categoryCounts={categoryCounts}
+              totalNotesCount={counts.all}
+              onSelectCategory={(catId) => {
+                if (catId) {
+                  setCurrentFilter('category');
+                  setSelectedCategory(catId);
+                  setSearchQuery('');
+                } else {
+                  setCurrentFilter('all');
+                  setSelectedCategory(null);
+                  setSearchQuery('');
+                }
+              }}
+              onReorderCategories={handleReorderCategories}
+              onOpenCategoryManager={handleOpenCategoryManager}
+              onOpenSlideshow={handleOpenSlideshow}
+            />
+          )}
+
           {/* Current View Header */}
           <div className="flex flex-col gap-2 mb-4 mt-2">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
                 <h1 className="text-sm sm:text-base font-bold text-[#1A1C16] dark:text-[#E2E3DC]">
                   {currentViewTitle}
@@ -526,17 +596,33 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Trash Actions */}
-              {currentFilter === 'trash' && counts.trash > 0 && (
-                <button
-                  type="button"
-                  onClick={handleEmptyTrash}
-                  className="px-4 py-1.5 bg-[#5C1A1A] hover:bg-[#722121] text-[#FFAB91] rounded-full text-xs font-bold shadow-xs flex items-center gap-1.5 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  تخلیه کامل سطل زباله
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {/* Exam Slideshow Mode Button */}
+                {currentFilter !== 'trash' && filteredNotes.length > 0 && (
+                  <button
+                    type="button"
+                    id="btn-open-slideshow"
+                    onClick={() => handleOpenSlideshow(selectedCategory)}
+                    className="px-3 sm:px-3.5 py-1.5 bg-[#4A6D22] hover:bg-[#3B571B] dark:bg-[#D0E8B2] dark:hover:bg-[#BDE098] text-white dark:text-[#1A3700] rounded-full text-xs font-bold shadow-xs flex items-center gap-1.5 transition-transform active:scale-95 cursor-pointer"
+                    title="مرور یادداشت‌ها به صورت اسلایدشو تمام‌صفحه برای شب امتحان"
+                  >
+                    <Presentation className="w-3.5 h-3.5" />
+                    <span>مرور امتحانی (اسلایدشو)</span>
+                  </button>
+                )}
+
+                {/* Trash Actions */}
+                {currentFilter === 'trash' && counts.trash > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleEmptyTrash}
+                    className="px-4 py-1.5 bg-[#5C1A1A] hover:bg-[#722121] text-[#FFAB91] rounded-full text-xs font-bold shadow-xs flex items-center gap-1.5 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    تخلیه کامل سطل زباله
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Active Advanced Search Badges */}
@@ -758,12 +844,16 @@ export default function App() {
       {/* Category Manager Modal */}
       <CategoryManagerModal
         isOpen={isCategoryManagerOpen}
-        onClose={() => setIsCategoryManagerOpen(false)}
+        onClose={() => {
+          setIsCategoryManagerOpen(false);
+          setCategoryManagerInitialParentId(null);
+        }}
         categories={categories}
         onCreateCategory={handleCreateCategory}
         onUpdateCategory={handleUpdateCategory}
         onDeleteCategory={handleDeleteCategory}
         categoryCounts={categoryCounts}
+        initialParentId={categoryManagerInitialParentId}
       />
 
       {/* Backup and Restore Modal */}
@@ -791,6 +881,17 @@ export default function App() {
         isOpen={isTelegramModalOpen}
         onClose={() => setIsTelegramModalOpen(false)}
         onRefreshData={loadData}
+      />
+
+      {/* Exam Review Slideshow Modal */}
+      <NoteSlideshowModal
+        isOpen={isSlideshowOpen}
+        onClose={() => setIsSlideshowOpen(false)}
+        categories={categories}
+        notes={notes}
+        initialCategoryId={slideshowCategoryId}
+        onToggleImportant={handleToggleImportant}
+        onTogglePin={handleTogglePin}
       />
 
       {/* Toast Floating Notification */}
