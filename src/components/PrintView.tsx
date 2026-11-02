@@ -28,20 +28,20 @@ export const PrintView: React.FC<{ note: Note }> = ({ note }) => {
       <div className="max-w-3xl mx-auto p-6 sm:p-10 space-y-4">
         {/* Document Header */}
         <div
-          className="border-b border-[#E1E4D5] pb-4 mb-4"
+          className="border-b border-[#CBD5E1] pb-4 mb-4"
           style={{ borderBottomColor: '#CBD5E1' }}
         >
           <div className="flex items-center justify-between gap-4 mb-2">
             <span
-              className="text-[10px] font-bold tracking-wider uppercase text-[#4A6D22]"
-              style={{ color: '#4A6D22' }}
+              className="text-[10px] font-bold tracking-wider uppercase text-[#2D550A]"
+              style={{ color: '#2D550A' }}
             >
               یادداشت NIVRA
             </span>
             <span
-              className="text-[10px] text-[#8F9285] font-medium"
+              className="text-[10px] text-[#475569] font-medium"
               dir="ltr"
-              style={{ color: '#64748B' }}
+              style={{ color: '#475569' }}
             >
               {formattedDate}
             </span>
@@ -55,7 +55,7 @@ export const PrintView: React.FC<{ note: Note }> = ({ note }) => {
               <InlineText text={note.title} isPrint={true} />
             </h1>
           ) : (
-            <h1 className="text-2xl font-bold text-[#8F9285] italic" style={{ color: '#94A3B8' }}>
+            <h1 className="text-2xl font-bold text-[#64748B] italic" style={{ color: '#64748B' }}>
               بدون عنوان
             </h1>
           )}
@@ -65,10 +65,10 @@ export const PrintView: React.FC<{ note: Note }> = ({ note }) => {
               {note.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-[#F1F5F9] text-[#475569] border border-[#CBD5E1]"
+                  className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#F1F5F9] text-[#1E293B] border border-[#CBD5E1]"
                   style={{
                     backgroundColor: '#F1F5F9',
-                    color: '#475569',
+                    color: '#1E293B',
                     borderColor: '#CBD5E1',
                     WebkitPrintColorAdjust: 'exact',
                     printColorAdjust: 'exact',
@@ -84,17 +84,22 @@ export const PrintView: React.FC<{ note: Note }> = ({ note }) => {
         {/* Note Summary if any */}
         {note.summary && (
           <div
-            className="p-3.5 rounded-xl text-xs leading-relaxed border border-[#E8DFC5] text-[#4E3F1A]"
+            className="p-4 rounded-2xl text-xs leading-relaxed border border-[#D9C48F] bg-[#FAF5E8]"
             style={{
-              backgroundColor: '#FAF2DE',
-              borderColor: '#E8DFC5',
-              color: '#4E3F1A',
+              backgroundColor: '#FAF5E8',
+              borderColor: '#D9C48F',
+              color: '#1A1C16',
               WebkitPrintColorAdjust: 'exact',
               printColorAdjust: 'exact',
             }}
           >
-            <div className="font-bold mb-1 text-[11px] text-[#7A5B0B]">خلاصه یادداشت:</div>
-            <InlineText text={note.summary} isPrint={true} />
+            <div className="flex items-center gap-1.5 font-bold mb-1.5 text-xs text-[#5C3D00]">
+              <span>💡</span>
+              <span>نکته کلیدی و خلاصه یادداشت:</span>
+            </div>
+            <div className="text-[#1A1C16] font-medium leading-relaxed">
+              <InlineText text={note.summary} isPrint={true} />
+            </div>
           </div>
         )}
 
@@ -109,8 +114,8 @@ export const PrintView: React.FC<{ note: Note }> = ({ note }) => {
 
         {/* Document Footer */}
         <div
-          className="mt-8 pt-4 border-t border-[#E1E4D5] flex items-center justify-between text-[10px] text-[#8F9285]"
-          style={{ borderTopColor: '#CBD5E1', color: '#94A3B8' }}
+          className="mt-8 pt-4 border-t border-[#CBD5E1] flex items-center justify-between text-[10px] text-[#475569] font-medium"
+          style={{ borderTopColor: '#CBD5E1', color: '#475569' }}
         >
           <span>NIVRA — Write Learn Remember</span>
           <span>نسخه چاپ و خروجی PDF</span>

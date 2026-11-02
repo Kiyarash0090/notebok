@@ -118,8 +118,40 @@
   /* Isolate print document from dark mode background & text inversions */
   .print-doc [class*="text-[#E2E3DC]"],
   .print-doc [class*="text-[#D1D5DB]"],
-  .print-doc [class*="text-[#BCC2B2]"] {
+  .print-doc [class*="text-[#BCC2B2]"],
+  .print-doc [class*="text-[#D0E8B2]"],
+  .print-doc [class*="text-[#DCF0C4]"],
+  .print-doc [class*="text-[#A8D3E6]"],
+  .print-doc [class*="text-[#CBE6F3]"],
+  .print-doc [class*="text-[#FFE086]"],
+  .print-doc [class*="text-[#FFE394]"],
+  .print-doc [class*="text-[#FFAB91]"],
+  .print-doc [class*="text-[#FFBDB0]"],
+  .print-doc [class*="text-[#9FD6B0]"],
+  .print-doc [class*="text-[#BCEAD0]"],
+  .print-doc [class*="text-[#FEF9C3]"],
+  .print-doc [class*="text-[#A8AC9F]"] {
     color: #1a1c16 !important;
+  }
+
+  /* Callout & Note Blocks: high contrast, crisp dark text in PDF & print */
+  .print-doc .print-callout,
+  .print-doc [data-callout-box] {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .print-doc .callout-text,
+  .print-doc .callout-text *,
+  .print-doc [data-callout-text],
+  .print-doc [data-callout-text] * {
+    color: #1a1c16 !important;
+    -webkit-text-fill-color: #1a1c16 !important;
+    font-weight: 500 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   /* Highlighting: crisp vibrant yellow highlight in PDF */

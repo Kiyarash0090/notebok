@@ -29,6 +29,7 @@ interface BlockShapesContainerProps {
   alignmentFilter?: 'inline' | 'float'; // to separate floated shapes from inline/block shapes
   layerFilter?: 'all' | 'behind' | 'in-front' | 'inline' | 'float';
   compact?: boolean;
+  isPrint?: boolean;
 }
 
 type ResizeHandleType = 'nw' | 'ne' | 'sw' | 'se' | 'e' | 's';
@@ -65,6 +66,7 @@ export const BlockShapesContainer: React.FC<BlockShapesContainerProps> = ({
   alignmentFilter,
   layerFilter,
   compact = false,
+  isPrint = false,
 }) => {
   const [editingShapeIndex, setEditingShapeIndex] = useState<number | null>(null);
   const [selectedShapeIndex, setSelectedShapeIndex] = useState<number | null>(null);
@@ -667,6 +669,7 @@ export const BlockShapesContainer: React.FC<BlockShapesContainerProps> = ({
             >
               {/* Shape Vector SVG */}
               <ShapeSvg
+                isPrint={isPrint}
                 shape={{
                   ...shp,
                   width: displayWidth,

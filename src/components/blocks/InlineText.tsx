@@ -103,7 +103,11 @@ const renderEmphasis = (text: string, kp: string, isPrint = false, highlightQuer
     (marker, inner) => {
       if (marker === '~~') {
         return (key) => (
-          <del key={key} className="line-through text-[#8F9285] dark:text-[#A8AC9F] print:text-[#64748B]">
+          <del
+            key={key}
+            className={`line-through ${isPrint ? 'text-[#64748B]' : 'text-[#8F9285] dark:text-[#A8AC9F]'} print:text-[#64748B]`}
+            style={isPrint ? { color: '#64748B' } : undefined}
+          >
             {renderEmphasis(inner, key, isPrint, highlightQuery)}
           </del>
         );
@@ -112,7 +116,7 @@ const renderEmphasis = (text: string, kp: string, isPrint = false, highlightQuer
         return (key) => (
           <mark
             key={key}
-            className="px-1 py-0.5 rounded bg-[#FEF08A] dark:bg-[#EAB308]/40 text-[#1A1C16] dark:text-[#FEF9C3] font-medium border border-[#FACC15]/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] print:bg-[#FEF08A] print:text-[#1A1C16] print:border-[#FACC15]"
+            className={`px-1 py-0.5 rounded bg-[#FEF08A] ${isPrint ? 'text-[#1A1C16]' : 'dark:bg-[#EAB308]/40 text-[#1A1C16] dark:text-[#FEF9C3]'} font-semibold border border-[#FACC15]/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] print:bg-[#FEF08A] print:text-[#1A1C16] print:border-[#FACC15]`}
             style={{
               backgroundColor: isPrint ? '#FEF08A' : undefined,
               color: isPrint ? '#1A1C16' : undefined,
@@ -128,20 +132,32 @@ const renderEmphasis = (text: string, kp: string, isPrint = false, highlightQuer
       }
       if (marker === '__') {
         return (key) => (
-          <u key={key} className="underline underline-offset-2 decoration-[#4A6D22] dark:decoration-[#D0E8B2]">
+          <u
+            key={key}
+            className={`underline underline-offset-2 ${isPrint ? 'text-[#1A1C16] decoration-[#4A6D22]' : 'decoration-[#4A6D22] dark:decoration-[#D0E8B2]'}`}
+            style={isPrint ? { color: '#1A1C16' } : undefined}
+          >
             {renderEmphasis(inner, key, isPrint, highlightQuery)}
           </u>
         );
       }
       if (marker === '***') {
         return (key) => (
-          <em key={key} className="italic font-bold">
+          <em
+            key={key}
+            className={`italic font-bold ${isPrint ? 'text-[#0F172A]' : ''}`}
+            style={isPrint ? { color: '#0F172A' } : undefined}
+          >
             {renderEmphasis(inner, key, isPrint, highlightQuery)}
           </em>
         );
       }
       return (key) => (
-        <strong key={key} className="font-bold text-[#1A1C16] dark:text-[#E2E3DC] print:text-[#0F172A]">
+        <strong
+          key={key}
+          className={`font-bold ${isPrint ? 'text-[#0F172A]' : 'text-[#1A1C16] dark:text-[#E2E3DC]'} print:text-[#0F172A]`}
+          style={isPrint ? { color: '#0F172A' } : undefined}
+        >
           {renderEmphasis(inner, key, isPrint, highlightQuery)}
         </strong>
       );
@@ -266,7 +282,7 @@ export const InlineText: React.FC<InlineTextProps> = ({
             key: `hm${lineIdx}-${i++}`,
             node: (
               <mark
-                className="px-1 py-0.5 rounded bg-[#FEF08A] dark:bg-[#EAB308]/40 text-[#1A1C16] dark:text-[#FEF9C3] font-medium border border-[#FACC15]/70 print:bg-[#FEF08A] print:text-[#1A1C16] print:border-[#FACC15]"
+                className={`px-1 py-0.5 rounded bg-[#FEF08A] ${isPrint ? 'text-[#1A1C16]' : 'dark:bg-[#EAB308]/40 text-[#1A1C16] dark:text-[#FEF9C3]'} font-semibold border border-[#FACC15]/70 print:bg-[#FEF08A] print:text-[#1A1C16] print:border-[#FACC15]`}
                 style={{
                   backgroundColor: isPrint ? '#FEF08A' : undefined,
                   color: isPrint ? '#1A1C16' : undefined,

@@ -33,6 +33,59 @@ interface BlockRendererProps {
   activeMatchBlockId?: string;
 }
 
+const PRINT_CALLOUT_STYLES: Record<
+  string,
+  {
+    bg: string;
+    border: string;
+    iconColor: string;
+    badgeBg: string;
+    badgeText: string;
+    badgeLabel: string;
+  }
+> = {
+  tip: {
+    bg: '#F2F9EA',
+    border: '#7FA842',
+    iconColor: '#2D550A',
+    badgeBg: '#E2F0CE',
+    badgeText: '#1E3A06',
+    badgeLabel: 'نکته طلایی',
+  },
+  info: {
+    bg: '#EDF5FA',
+    border: '#60A5FA',
+    iconColor: '#1E40AF',
+    badgeBg: '#DBEAFE',
+    badgeText: '#1E3A8A',
+    badgeLabel: 'توضیح و نکته',
+  },
+  warning: {
+    bg: '#FEF9E7',
+    border: '#FBBF24',
+    iconColor: '#B45309',
+    badgeBg: '#FEF08A',
+    badgeText: '#713F12',
+    badgeLabel: 'هشدار و توجه',
+  },
+  danger: {
+    bg: '#FEF2F2',
+    border: '#F87171',
+    iconColor: '#DC2626',
+    badgeBg: '#FEE2E2',
+    badgeText: '#991B1B',
+    badgeLabel: 'نکته بسیار مهم / خطر',
+  },
+  success: {
+    bg: '#F0FDF4',
+    border: '#4ADE80',
+    iconColor: '#16A34A',
+    badgeBg: '#DCFCE7',
+    badgeText: '#14532D',
+    badgeLabel: 'نکته تأیید شده',
+  },
+};
+
 const HEADING_CLASS: Record<number, string> = {
   1: 'text-base sm:text-lg font-extrabold',
   2: 'text-sm sm:text-base font-bold',
@@ -76,14 +129,17 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
           return (
             <div className="block-wrapper relative">
               <blockquote
-                className={`border-r-3 relative z-10 ${
+                className={`border-r-4 relative z-10 ${
                   isPrint
-                    ? 'border-[#4A6D22] text-[#2C3327] bg-[#F8FAF5] pr-3 py-1.5'
+                    ? 'border-[#4A6D22] text-[#1A1C16] bg-[#F4F7EE] pr-3.5 py-2 font-medium rounded-l-xl'
                     : 'border-[#D0E8B2] dark:border-[#4A6D22] pr-3 py-0.5 text-[#3F4A35] dark:text-[#BCC2B2]'
                 } text-xs sm:text-sm italic whitespace-pre-wrap`}
                 style={
                   isPrint
                     ? {
+                        borderColor: '#4A6D22',
+                        backgroundColor: '#F4F7EE',
+                        color: '#1A1C16',
                         WebkitPrintColorAdjust: 'exact',
                         printColorAdjust: 'exact',
                       }
@@ -92,24 +148,79 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
               >
                 <InlineText text={block.text} isPrint={isPrint} highlightQuery={searchQuery} />
               </blockquote>
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
+              {hasShapes && <BlockShapesContainer block={block} compact={compact} isPrint={isPrint} />}
             </div>
           );
 
         case 'callout': {
-          const style = CALLOUT_STYLES[block.tone || 'info'];
+          const tone = block.tone || 'info';
+          const style = CALLOUT_STYLES[tone] || CALLOUT_STYLES.info;
+          const printStyle = PRINT_CALLOUT_STYLES[tone] || PRINT_CALLOUT_STYLES.tip;
+
+          if (isPrint) {
+            return (
+              <div className="block-wrapper relative print-callout my-2">
+                <div
+                  className="flex gap-3 items-start p-3.5 rounded-2xl border relative z-10 text-xs sm:text-sm shadow-xs"
+                  data-callout-box="true"
+                  style={{
+                    backgroundColor: printStyle.bg,
+                    borderColor: printStyle.border,
+                    borderWidth: '1.5px',
+                    color: '#1A1C16',
+                    WebkitPrintColorAdjust: 'exact',
+                    printColorAdjust: 'exact',
+                    pageBreakInside: 'avoid',
+                    breakInside: 'avoid',
+                  }}
+                >
+                  <div className="flex items-center gap-1.5 pt-0.5 shrink-0" data-print-icon="true">
+                    <span
+                      className="p-1.5 rounded-lg flex items-center justify-center"
+                      style={{
+                        backgroundColor: printStyle.badgeBg,
+                        color: printStyle.iconColor,
+                        WebkitPrintColorAdjust: 'exact',
+                        printColorAdjust: 'exact',
+                      }}
+                    >
+                      <style.icon className="w-4 h-4" style={{ color: printStyle.iconColor }} />
+                    </span>
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div
+                      className="text-[11px] font-bold tracking-tight inline-block px-1.5 py-0.5 rounded"
+                      style={{
+                        backgroundColor: printStyle.badgeBg,
+                        color: printStyle.badgeText,
+                        WebkitPrintColorAdjust: 'exact',
+                        printColorAdjust: 'exact',
+                      }}
+                    >
+                      {printStyle.badgeLabel}
+                    </div>
+                    <div
+                      className="callout-text leading-relaxed whitespace-pre-wrap font-medium text-[#1A1C16]"
+                      data-callout-text="true"
+                      style={{
+                        color: '#1A1C16',
+                        WebkitPrintColorAdjust: 'exact',
+                        printColorAdjust: 'exact',
+                      }}
+                    >
+                      <InlineText text={block.text} isPrint={true} highlightQuery={searchQuery} />
+                    </div>
+                  </div>
+                </div>
+                {hasShapes && <BlockShapesContainer block={block} compact={compact} isPrint={true} />}
+              </div>
+            );
+          }
+
           return (
             <div className="block-wrapper relative">
               <div
-                className={`flex gap-2.5 items-start p-3 rounded-2xl border relative z-10 ${style.light} ${isPrint ? '' : style.dark} text-xs sm:text-sm`}
-                style={
-                  isPrint
-                    ? {
-                        WebkitPrintColorAdjust: 'exact',
-                        printColorAdjust: 'exact',
-                      }
-                    : undefined
-                }
+                className={`flex gap-2.5 items-start p-3 rounded-2xl border relative z-10 ${style.light} ${style.dark} text-xs sm:text-sm`}
               >
                 <span className="flex items-center pt-0.5"><style.icon className="w-4 h-4" /></span>
                 <div className={`min-w-0 flex-1 leading-relaxed whitespace-pre-wrap ${style.text}`}>
@@ -246,18 +357,25 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                     }`}
                   >
                     {item.done ? (
-                      <CheckSquare className="w-4 h-4 shrink-0 mt-0.5 text-[#4A6D22] dark:text-[#D0E8B2]" />
+                      <CheckSquare
+                        className="w-4 h-4 shrink-0 mt-0.5 text-[#4A6D22] dark:text-[#D0E8B2]"
+                        style={isPrint ? { color: '#2D550A' } : undefined}
+                      />
                     ) : (
-                      <Square className="w-4 h-4 shrink-0 mt-0.5 text-[#8F9285]" />
+                      <Square
+                        className="w-4 h-4 shrink-0 mt-0.5 text-[#8F9285]"
+                        style={isPrint ? { color: '#64748B' } : undefined}
+                      />
                     )}
                     <span
                       className={
                         item.done
-                          ? 'line-through text-[#8F9285]'
+                          ? 'line-through text-[#64748B]'
                           : isPrint
-                          ? 'text-[#1A1C16]'
+                          ? 'text-[#1A1C16] font-medium'
                           : 'text-[#1A1C16] dark:text-[#E2E3DC] group-hover/chk:text-[#4A6D22] dark:group-hover/chk:text-[#D0E8B2]'
                       }
+                      style={isPrint ? { color: item.done ? '#64748B' : '#1A1C16' } : undefined}
                     >
                       <InlineText text={item.text || '—'} isPrint={isPrint} highlightQuery={searchQuery} />
                     </span>

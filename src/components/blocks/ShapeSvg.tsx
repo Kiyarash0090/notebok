@@ -11,6 +11,7 @@ interface ShapeSvgProps {
   style?: React.CSSProperties;
   width?: number | string;
   height?: number | string;
+  isPrint?: boolean;
 }
 
 const getShapeTextPadding = (kind: ShapeKind, strokeWidth: number): string => {
@@ -59,6 +60,7 @@ export const ShapeSvg: React.FC<ShapeSvgProps> = ({
   style = {},
   width,
   height,
+  isPrint = false,
 }) => {
   // Normalize configuration from shape object or individual props
   const kind: ShapeKind = shape?.kind || propKind || 'rect';
@@ -617,7 +619,7 @@ export const ShapeSvg: React.FC<ShapeSvgProps> = ({
             }}
           >
             {innerText.trim() !== '' ? (
-              <InlineText text={innerText} />
+              <InlineText text={innerText} isPrint={isPrint} />
             ) : (
               kind === 'textbox' && (
                 <span className="opacity-40 text-xs italic font-normal">
