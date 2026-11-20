@@ -19,7 +19,7 @@ import {
 } from './telegramStorage';
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = 3000;
 
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '60mb' }));
