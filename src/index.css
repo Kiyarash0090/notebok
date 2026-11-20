@@ -10,6 +10,12 @@
   }
 }
 
+[data-rich-editor="true"]:empty::before {
+  content: attr(data-placeholder);
+  color: #8F9285;
+  pointer-events: none;
+}
+
 /* Custom scrollbar matching Google apps */
 ::-webkit-scrollbar {
   width: 6px;
@@ -27,6 +33,14 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(120, 120, 120, 0.45);
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* RTL Helpers */
@@ -154,19 +168,51 @@
     print-color-adjust: exact !important;
   }
 
-  /* Highlighting: crisp vibrant yellow highlight in PDF */
+  /* Highlighting: crisp vibrant highlights in PDF */
   .print-doc mark,
   mark,
   [data-mark="highlight"] {
-    background-color: #fef08a !important;
-    color: #1a1c16 !important;
     padding: 2px 6px !important;
     border-radius: 4px !important;
-    border: 1px solid #facc15 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
     box-decoration-break: clone !important;
     -webkit-box-decoration-break: clone !important;
+  }
+
+  .print-doc mark:not([data-color]),
+  .print-doc mark[data-color="yellow"],
+  mark:not([data-color]),
+  mark[data-color="yellow"],
+  [data-mark="highlight"]:not([data-color]),
+  [data-mark="highlight"][data-color="yellow"] {
+    background-color: #fef08a !important;
+    color: #1a1c16 !important;
+    border: 1px solid #facc15 !important;
+  }
+
+  .print-doc mark[data-color="green"],
+  mark[data-color="green"],
+  [data-mark="highlight"][data-color="green"] {
+    background-color: #bbf7d0 !important;
+    color: #14532d !important;
+    border: 1px solid #4ade80 !important;
+  }
+
+  .print-doc mark[data-color="blue"],
+  mark[data-color="blue"],
+  [data-mark="highlight"][data-color="blue"] {
+    background-color: #bae6fd !important;
+    color: #0c4a6e !important;
+    border: 1px solid #38bdf8 !important;
+  }
+
+  .print-doc mark[data-color="pink"],
+  mark[data-color="pink"],
+  [data-mark="highlight"][data-color="pink"] {
+    background-color: #fbcfe8 !important;
+    color: #831843 !important;
+    border: 1px solid #f472b6 !important;
   }
 
   /* Inline code: clean pill box with border */
@@ -275,12 +321,6 @@
 
   /* Checklist and Callout cards */
   .print-doc .block-wrapper {
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
-  }
-
-  /* Shape elements in print: keep intact, prevent overflow or strange clipping */
-  .print-doc .shape-item-container {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }

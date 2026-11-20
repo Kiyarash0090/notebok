@@ -5,13 +5,17 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import {
   getTelegramConfig,
+  getTelegramChannelStatus,
   saveTelegramConfig,
   testTelegramConnection,
   uploadFileToTelegram,
   downloadFileFromTelegram,
+  deleteFileFromTelegram,
   syncDbToTelegram,
   restoreDbFromTelegram,
   migrateLocalFilesToTelegram,
+  syncFilesIndexToTelegram,
+  readFilesIndexFromTelegram,
 } from './telegramStorage';
 
 const app = express();
@@ -22,6 +26,7 @@ app.use(express.json({ limit: '60mb' }));
 // Paths for persistent data
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'notes_db.json');
+const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
 const SNAPSHOTS_DIR = path.join(DATA_DIR, 'snapshots');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const REVISIONS_DIR = path.join(DATA_DIR, 'revisions');
@@ -149,6 +154,9 @@ interface DBStructure {
   version: number;
   notes: any[];
   categories: any[];
+  files?: any[];
+  fileFolders?: any[];
+  filesSyncedChatId?: string;
   drafts?: Record<string, any>;
   lastUpdated: string;
 }
@@ -161,6 +169,8 @@ function readDB(): DBStructure {
         version: 2,
         notes: DEFAULT_NOTES,
         categories: DEFAULT_CATEGORIES,
+        files: [],
+        fileFolders: [],
         drafts: {},
         lastUpdated: new Date().toISOString(),
       };
@@ -170,6 +180,8 @@ function readDB(): DBStructure {
     const data = fs.readFileSync(DB_FILE, 'utf-8');
     const parsed = JSON.parse(data);
     if (!parsed.drafts) parsed.drafts = {};
+    if (!Array.isArray(parsed.files)) parsed.files = [];
+    if (!Array.isArray(parsed.fileFolders)) parsed.fileFolders = [];
     return parsed;
   } catch (err) {
     console.error('Error reading DB:', err);
@@ -177,6 +189,8 @@ function readDB(): DBStructure {
       version: 2,
       notes: DEFAULT_NOTES,
       categories: DEFAULT_CATEGORIES,
+      files: [],
+      fileFolders: [],
       drafts: {},
       lastUpdated: new Date().toISOString(),
     };
@@ -211,7 +225,22 @@ function computeDataHash(db: DBStructure): string {
     color: c.color,
     parentId: c.parentId,
   }));
-  return crypto.createHash('sha256').update(JSON.stringify({ notesCore, categoriesCore })).digest('hex');
+  const filesCore = (db.files || []).map((f) => ({
+    id: f.id,
+    name: f.name,
+    folderId: f.folderId,
+    url: f.url,
+    updatedAt: f.updatedAt,
+  }));
+  const foldersCore = (db.fileFolders || []).map((fld) => ({
+    id: fld.id,
+    name: fld.name,
+    parentId: fld.parentId,
+  }));
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({ notesCore, categoriesCore, filesCore, foldersCore }))
+    .digest('hex');
 }
 
 function writeDB(db: DBStructure, options: { skipTelegramSync?: boolean } = {}): boolean {
@@ -550,9 +579,323 @@ function createSnapshotRecord(db: DBStructure, label = 'خودکار'): any {
 // API ROUTES
 // ==========================================
 
+// ==========================================
+// AUTHENTICATION & FIRST-TIME SETUP
+// ==========================================
+
+interface AuthConfig {
+  username: string;
+  passwordHash: string;
+  salt: string;
+  sessionSecret: string;
+  tokenVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const SESSION_COOKIE_NAME = 'nivra_session';
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function readAuthConfig(): AuthConfig | null {
+  try {
+    if (!fs.existsSync(AUTH_FILE)) return null;
+    const raw = fs.readFileSync(AUTH_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as AuthConfig;
+  } catch {
+    return null;
+  }
+}
+
+function writeAuthConfig(cfg: AuthConfig): boolean {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const tmp = `${AUTH_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf-8');
+    fs.renameSync(tmp, AUTH_FILE);
+    return true;
+  } catch (err) {
+    console.error('Error writing auth config:', err);
+    return false;
+  }
+}
+
+function isAuthConfigured(cfg: AuthConfig | null): cfg is AuthConfig {
+  return Boolean(
+    cfg &&
+      typeof cfg.username === 'string' &&
+      cfg.username.trim().length > 0 &&
+      typeof cfg.passwordHash === 'string' &&
+      cfg.passwordHash.length > 0 &&
+      typeof cfg.salt === 'string' &&
+      cfg.salt.length > 0 &&
+      typeof cfg.sessionSecret === 'string' &&
+      cfg.sessionSecret.length > 0
+  );
+}
+
+function hashPassword(password: string, salt: string): string {
+  return crypto.scryptSync(password, salt, 64).toString('hex');
+}
+
+function verifyPassword(password: string, salt: string, expectedHash: string): boolean {
+  try {
+    const actual = Buffer.from(hashPassword(password, salt), 'hex');
+    const expected = Buffer.from(expectedHash, 'hex');
+    if (actual.length !== expected.length) return false;
+    return crypto.timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
+}
+
+function signSessionToken(cfg: AuthConfig): string {
+  const payload = {
+    u: cfg.username,
+    v: cfg.tokenVersion || 1,
+    exp: Date.now() + SESSION_TTL_MS,
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');
+  const sig = crypto.createHmac('sha256', cfg.sessionSecret).update(payloadB64).digest('base64url');
+  return `${payloadB64}.${sig}`;
+}
+
+function verifySessionToken(token: string, cfg: AuthConfig | null): { username: string } | null {
+  if (!isAuthConfigured(cfg) || !token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payloadB64, sig] = parts;
+  if (!payloadB64 || !sig) return null;
+
+  try {
+    const expectedSig = crypto.createHmac('sha256', cfg.sessionSecret).update(payloadB64).digest('base64url');
+    const sigBuf = Buffer.from(sig, 'utf-8');
+    const expectedBuf = Buffer.from(expectedSig, 'utf-8');
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      return null;
+    }
+
+    const parsed = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
+    if (
+      !parsed ||
+      parsed.u !== cfg.username ||
+      (parsed.v || 1) !== (cfg.tokenVersion || 1) ||
+      typeof parsed.exp !== 'number' ||
+      parsed.exp <= Date.now()
+    ) {
+      return null;
+    }
+    return { username: cfg.username };
+  } catch {
+    return null;
+  }
+}
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!cookieHeader) return out;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const key = part.slice(0, idx).trim();
+    const val = part.slice(idx + 1).trim();
+    if (key) {
+      try {
+        out[key] = decodeURIComponent(val);
+      } catch {
+        out[key] = val;
+      }
+    }
+  }
+  return out;
+}
+
+function extractRequestToken(req: express.Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    const t = authHeader.slice(7).trim();
+    if (t) return t;
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies[SESSION_COOKIE_NAME]) return cookies[SESSION_COOKIE_NAME];
+  return null;
+}
+
+function isHttpsRequest(req: express.Request): boolean {
+  return Boolean(req.secure || req.headers['x-forwarded-proto'] === 'https');
+}
+
+function setSessionCookie(req: express.Request, res: express.Response, token: string): void {
+  const maxAgeSec = Math.floor(SESSION_TTL_MS / 1000);
+  const attrs = isHttpsRequest(req) ? 'SameSite=None; Secure' : 'SameSite=Lax';
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; Max-Age=${maxAgeSec}; ${attrs}`
+  );
+}
+
+function clearSessionCookie(req: express.Request, res: express.Response): void {
+  const attrs = isHttpsRequest(req) ? 'SameSite=None; Secure' : 'SameSite=Lax';
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; Max-Age=0; ${attrs}`
+  );
+}
+
 // Health Check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// Auth Status: check whether initial credentials exist and whether current request is authenticated
+app.get('/api/auth/status', (req, res) => {
+  const authCfg = readAuthConfig();
+  if (!isAuthConfigured(authCfg)) {
+    return res.json({ success: true, configured: false, authenticated: false });
+  }
+  const token = extractRequestToken(req);
+  const session = token ? verifySessionToken(token, authCfg) : null;
+  res.json({
+    success: true,
+    configured: true,
+    authenticated: Boolean(session),
+    username: session ? session.username : undefined,
+  });
+});
+
+// First-time Setup: only allowed when no password has been set yet
+app.post('/api/auth/setup', (req, res) => {
+  const existing = readAuthConfig();
+  if (isAuthConfigured(existing)) {
+    return res.status(409).json({
+      success: false,
+      error: 'نام کاربری و رمز عبور قبلاً تنظیم شده‌اند. لطفاً وارد شوید.',
+    });
+  }
+
+  const rawUsername = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+  const rawPassword = typeof req.body?.password === 'string' ? req.body.password : '';
+  const rawConfirm = req.body?.confirmPassword;
+
+  if (rawUsername.length < 2 || rawUsername.length > 40) {
+    return res.status(400).json({
+      success: false,
+      error: 'نام کاربری باید بین ۲ تا ۴۰ کاراکتر باشد.',
+    });
+  }
+  if (rawPassword.length < 4 || rawPassword.length > 128) {
+    return res.status(400).json({
+      success: false,
+      error: 'رمز عبور باید حداقل ۴ کاراکتر باشد.',
+    });
+  }
+  if (rawConfirm !== undefined && rawPassword !== rawConfirm) {
+    return res.status(400).json({
+      success: false,
+      error: 'رمز عبور و تکرار آن یکسان نیستند.',
+    });
+  }
+
+  const now = new Date().toISOString();
+  const salt = crypto.randomBytes(16).toString('hex');
+  const sessionSecret = crypto.randomBytes(32).toString('hex');
+  const passwordHash = hashPassword(rawPassword, salt);
+
+  const authCfg: AuthConfig = {
+    username: rawUsername,
+    passwordHash,
+    salt,
+    sessionSecret,
+    tokenVersion: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  if (!writeAuthConfig(authCfg)) {
+    return res.status(500).json({ success: false, error: 'خطا در ذخیره اطلاعات ورود روی سرور' });
+  }
+
+  const token = signSessionToken(authCfg);
+  setSessionCookie(req, res, token);
+  res.status(201).json({
+    success: true,
+    token,
+    user: { username: authCfg.username },
+  });
+});
+
+// Login with username and password
+app.post('/api/auth/login', (req, res) => {
+  const authCfg = readAuthConfig();
+  if (!isAuthConfigured(authCfg)) {
+    return res.status(400).json({
+      success: false,
+      needsSetup: true,
+      error: 'هنوز نام کاربری و رمز عبوری تنظیم نشده است.',
+    });
+  }
+
+  const rawUsername = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+  const rawPassword = typeof req.body?.password === 'string' ? req.body.password : '';
+
+  if (!rawUsername || !rawPassword) {
+    return res.status(400).json({
+      success: false,
+      error: 'لطفاً نام کاربری و رمز عبور را وارد کنید.',
+    });
+  }
+
+  const usernameMatches = rawUsername.toLowerCase() === authCfg.username.toLowerCase();
+  const passwordMatches = verifyPassword(rawPassword, authCfg.salt, authCfg.passwordHash);
+
+  if (!usernameMatches || !passwordMatches) {
+    return res.status(401).json({
+      success: false,
+      error: 'نام کاربری یا رمز عبور اشتباه است.',
+    });
+  }
+
+  const token = signSessionToken(authCfg);
+  setSessionCookie(req, res, token);
+  res.json({
+    success: true,
+    token,
+    user: { username: authCfg.username },
+  });
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+  clearSessionCookie(req, res);
+  res.json({ success: true });
+});
+
+// Protect all other /api/* endpoints
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health' || req.path.startsWith('/auth/')) {
+    return next();
+  }
+  const authCfg = readAuthConfig();
+  if (!isAuthConfigured(authCfg)) {
+    return res.status(401).json({
+      success: false,
+      needsSetup: true,
+      error: 'ابتدا باید نام کاربری و رمز عبور را تنظیم کنید.',
+    });
+  }
+  const token = extractRequestToken(req);
+  const session = token ? verifySessionToken(token, authCfg) : null;
+  if (!session) {
+    return res.status(401).json({
+      success: false,
+      unauthorized: true,
+      error: 'نیاز به ورود به حساب کاربری دارید.',
+    });
+  }
+  next();
 });
 
 // GET all notes with filters & advanced search
@@ -835,15 +1178,15 @@ app.post('/api/uploads', async (req, res) => {
       return res.status(400).json({ success: false, error: 'محتوای فایل ارسال نشده است' });
     }
 
-    // Allow optional MIME parameters (e.g. audio/webm;codecs=opus) that
-    // MediaRecorder blobs carry and FileReader embeds in the data URL.
-    const match = dataUrl.match(/^data:([a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+(?:;[a-zA-Z0-9!#$&^_+=-]+)*);base64,(.+)$/);
+    // Allow optional MIME parameters (e.g. audio/webm;codecs=opus) or empty MIME
+    // (e.g. data:;base64,... or data:application/octet-stream;base64,... for zip/rar/unknown files).
+    const match = dataUrl.match(/^data:([a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+(?:;[a-zA-Z0-9!#$&^_+=-]+)*)?(?:;base64)?,(.+)$/);
     if (!match) {
       return res.status(400).json({ success: false, error: 'قالب فایل ارسالی معتبر نیست' });
     }
 
-    const mimeType = match[1];
-    const mimeBase = mimeType.split(';')[0].trim();
+    const mimeType = match[1] || 'application/octet-stream';
+    const mimeBase = mimeType.split(';')[0].trim() || 'application/octet-stream';
     const buffer = Buffer.from(match[2], 'base64');
     if (buffer.length === 0) {
       return res.status(400).json({ success: false, error: 'فایل خالی است' });
@@ -885,7 +1228,7 @@ app.post('/api/uploads', async (req, res) => {
 
     const originalName = clampText(name, 300, 'فایل');
     const extFromName = path.extname(originalName).replace(/[^A-Za-z0-9]/g, '').toLowerCase();
-    const ext = EXTENSION_BY_MIME[mimeBase] || extFromName || 'bin';
+    const ext = extFromName || EXTENSION_BY_MIME[mimeBase] || 'bin';
     const filename = `${Date.now()}_${crypto.randomBytes(6).toString('hex')}.${ext}`;
 
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -917,6 +1260,16 @@ app.post('/api/uploads', async (req, res) => {
 // Serve stream/buffer for Telegram stored file by message ID
 app.get('/api/telegram/file/:messageId', async (req, res) => {
   try {
+    const tgStatus = getTelegramChannelStatus();
+    if (!tgStatus.ready) {
+      return res.status(403).json({
+        success: false,
+        locked: true,
+        reason: tgStatus.reason,
+        error: 'کانال تلگرام برای خواندن فایل‌ها تنظیم یا فعال نشده است.',
+      });
+    }
+
     const messageId = parseInt(req.params.messageId, 10);
     if (isNaN(messageId)) {
       return res.status(400).json({ success: false, error: 'شناسه پیام نامعتبر است' });
@@ -927,20 +1280,33 @@ app.get('/api/telegram/file/:messageId', async (req, res) => {
     if (mimeType) {
       res.setHeader('Content-Type', mimeType);
     }
+    const reqFilename = typeof req.query.filename === 'string' ? req.query.filename.trim() : '';
+    if (reqFilename) {
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename*=UTF-8''${encodeURIComponent(reqFilename)}`
+      );
+    }
     res.setHeader('Content-Length', buffer.length);
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache in browser 24h
+    res.setHeader('Cache-Control', 'private, max-age=3600');
 
     res.send(buffer);
   } catch (err: any) {
     console.error('Error serving Telegram file:', err.message);
-    res.status(404).json({ success: false, error: 'فایل در ابَر-فضای ابری تلگرام یافت نشد.' });
+    res.status(404).json({ success: false, error: 'فایل در کانال تلگرام یافت نشد.' });
   }
+});
+
+// Get Telegram channel readiness status
+app.get('/api/telegram/status', (req, res) => {
+  const status = getTelegramChannelStatus();
+  res.json({ success: true, ...status });
 });
 
 // Get Telegram config
 app.get('/api/telegram/config', (req, res) => {
   const config = getTelegramConfig();
-  res.json({ success: true, config });
+  res.json({ success: true, config, status: getTelegramChannelStatus(config) });
 });
 
 // Save Telegram config
@@ -953,7 +1319,7 @@ app.post('/api/telegram/config', (req, res) => {
       apiId: Number(req.body.apiId) || 0,
     };
     saveTelegramConfig(updated);
-    res.json({ success: true, config: updated });
+    res.json({ success: true, config: updated, status: getTelegramChannelStatus(updated) });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1063,6 +1429,477 @@ app.put('/api/uploads/:filename', (req, res) => {
     return res.status(404).json({ success: false, error: 'فایل یافت نشد' });
   }
   fs.writeFileSync(target, content, 'utf8');
+  res.json({ success: true });
+});
+
+// ==========================================
+// FILE MANAGER ENDPOINTS (STRICT TELEGRAM CHANNEL STORAGE)
+// ==========================================
+
+function requireTelegramChannel(res: express.Response) {
+  const status = getTelegramChannelStatus();
+  if (!status.ready) {
+    res.status(403).json({
+      success: false,
+      locked: true,
+      reason: status.reason,
+      hasCredentials: status.hasCredentials,
+      hasChatId: status.hasChatId,
+      enabled: status.enabled,
+      chatId: status.chatId,
+      error:
+        status.reason === 'disabled'
+          ? 'ذخیره‌سازی ابری تلگرام غیرفعال است. برای دسترسی به مدیریت فایل‌ها، آن را در تنظیمات تلگرام فعال کنید.'
+          : 'دسترسی به بخش فایل‌ها بسته است. ابتدا کانال تلگرام و اطلاعات ربات را تنظیم کنید.',
+    });
+    return null;
+  }
+  return status;
+}
+
+let filesIndexSyncTimer: NodeJS.Timeout | null = null;
+function scheduleFilesIndexSync() {
+  if (filesIndexSyncTimer) clearTimeout(filesIndexSyncTimer);
+  filesIndexSyncTimer = setTimeout(() => {
+    filesIndexSyncTimer = null;
+    const status = getTelegramChannelStatus();
+    if (!status.ready) return;
+    const freshDb = readDB();
+    syncFilesIndexToTelegram(freshDb.files || [], freshDb.fileFolders || []).catch((err) => {
+      console.error('Background Telegram files index sync error:', err.message);
+    });
+  }, 1500);
+  if (filesIndexSyncTimer && typeof filesIndexSyncTimer.unref === 'function') {
+    filesIndexSyncTimer.unref();
+  }
+}
+
+function mergeChannelFilesIntoDb(
+  db: DBStructure,
+  channelFiles: any[],
+  channelFolders: any[],
+  chatId: string
+) {
+  const otherFiles = (db.files || []).filter(
+    (f) => f && f.storage === 'telegram' && f.telegramChatId && f.telegramChatId !== chatId
+  );
+  const otherFolders = (db.fileFolders || []).filter(
+    (fld) => fld && fld.telegramChatId && fld.telegramChatId !== chatId
+  );
+
+  // Merge with any locally recorded telegram files for this chatId by telegramMessageId
+  const localForChat = (db.files || []).filter(
+    (f) => f && f.storage === 'telegram' && (!f.telegramChatId || f.telegramChatId === chatId)
+  );
+  const byMsgId = new Map<number, any>();
+  for (const f of channelFiles) {
+    const msgId = Number(f.telegramMessageId);
+    if (Number.isFinite(msgId) && msgId > 0) {
+      byMsgId.set(msgId, { ...f, storage: 'telegram', telegramChatId: chatId });
+    }
+  }
+  for (const f of localForChat) {
+    const msgId = Number(f.telegramMessageId) || extractTelegramMessageIdFromUrl(f.url);
+    if (msgId && !byMsgId.has(msgId)) {
+      byMsgId.set(msgId, { ...f, storage: 'telegram', telegramMessageId: msgId, telegramChatId: chatId });
+    }
+  }
+
+  const folderById = new Map<string, any>();
+  for (const fld of channelFolders) {
+    if (fld?.id) folderById.set(fld.id, { ...fld, telegramChatId: chatId });
+  }
+  for (const fld of db.fileFolders || []) {
+    if (fld?.id && (!fld.telegramChatId || fld.telegramChatId === chatId) && !folderById.has(fld.id)) {
+      folderById.set(fld.id, { ...fld, telegramChatId: chatId });
+    }
+  }
+
+  db.files = [...Array.from(byMsgId.values()), ...otherFiles];
+  db.fileFolders = [...Array.from(folderById.values()), ...otherFolders];
+  db.filesSyncedChatId = chatId;
+}
+
+function extractTelegramMessageIdFromUrl(url: any): number | undefined {
+  if (typeof url !== 'string') return undefined;
+  const m = url.match(/\/api\/telegram\/file\/(\d+)/);
+  return m ? Number(m[1]) : undefined;
+}
+
+app.get('/api/files', async (req, res) => {
+  const status = requireTelegramChannel(res);
+  if (!status) return;
+
+  const db = readDB();
+  const forceRefresh = req.query.refresh === '1';
+  const needsChannelRead = forceRefresh || db.filesSyncedChatId !== status.chatId;
+
+  if (needsChannelRead) {
+    try {
+      const tgData = await readFilesIndexFromTelegram();
+      mergeChannelFilesIntoDb(db, tgData.files, tgData.folders, status.chatId);
+      writeDB(db, { skipTelegramSync: true });
+    } catch (err: any) {
+      console.error('Failed reading files from Telegram channel:', err.message);
+      if (forceRefresh) {
+        return res.status(502).json({
+          success: false,
+          error: `خطا در خواندن فایل‌ها از کانال تلگرام: ${err.message}`,
+        });
+      }
+    }
+  }
+
+  const files = (db.files || [])
+    .filter((f) => f && f.storage === 'telegram' && (!f.telegramChatId || f.telegramChatId === status.chatId))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const folders = (db.fileFolders || [])
+    .filter((fld) => fld && (!fld.telegramChatId || fld.telegramChatId === status.chatId))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fa'));
+
+  res.json({ success: true, files, folders, chatId: status.chatId });
+});
+
+app.post('/api/files/sync', async (req, res) => {
+  const status = requireTelegramChannel(res);
+  if (!status) return;
+
+  try {
+    const db = readDB();
+    const tgData = await readFilesIndexFromTelegram();
+    mergeChannelFilesIntoDb(db, tgData.files, tgData.folders, status.chatId);
+    writeDB(db, { skipTelegramSync: true });
+
+    const files = (db.files || [])
+      .filter((f) => f && f.storage === 'telegram' && (!f.telegramChatId || f.telegramChatId === status.chatId))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const folders = (db.fileFolders || [])
+      .filter((fld) => fld && (!fld.telegramChatId || fld.telegramChatId === status.chatId))
+      .sort((a, b) => a.name.localeCompare(b.name, 'fa'));
+
+    res.json({ success: true, files, folders, chatId: status.chatId });
+  } catch (err: any) {
+    res.status(502).json({
+      success: false,
+      error: `خطا در همگام‌سازی فایل‌ها از کانال تلگرام: ${err.message}`,
+    });
+  }
+});
+
+// Direct upload endpoint for File Manager: strictly saves to the configured Telegram channel (no local fallback)
+app.post(
+  '/api/files/upload',
+  express.raw({ type: 'application/octet-stream', limit: '250mb' }),
+  async (req, res) => {
+    const status = requireTelegramChannel(res);
+    if (!status) return;
+
+    try {
+      let buffer: Buffer;
+      let originalName = 'فایل';
+      let mimeBase = 'application/octet-stream';
+      let folderId: string | null = null;
+
+      if (Buffer.isBuffer(req.body)) {
+        buffer = req.body;
+        const headerName = req.headers['x-file-name'];
+        if (typeof headerName === 'string' && headerName.trim()) {
+          try {
+            originalName = clampText(decodeURIComponent(headerName), 300, 'فایل');
+          } catch {
+            originalName = clampText(headerName, 300, 'فایل');
+          }
+        }
+        const headerMime = req.headers['x-file-mime'];
+        if (typeof headerMime === 'string' && headerMime.trim()) {
+          mimeBase = headerMime.split(';')[0].trim() || 'application/octet-stream';
+        }
+        const headerFolder = req.headers['x-folder-id'];
+        if (typeof headerFolder === 'string' && headerFolder.trim()) {
+          folderId = headerFolder.trim();
+        }
+      } else {
+        const { dataUrl, name, folderId: bodyFolderId } = req.body || {};
+        if (typeof dataUrl !== 'string') {
+          return res.status(400).json({ success: false, error: 'محتوای فایل ارسال نشده است' });
+        }
+        const match = dataUrl.match(
+          /^data:([a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+(?:;[a-zA-Z0-9!#$&^_+=-]+)*)?(?:;base64)?,(.+)$/
+        );
+        if (!match) {
+          return res.status(400).json({ success: false, error: 'قالب فایل ارسالی معتبر نیست' });
+        }
+        const mimeType = match[1] || 'application/octet-stream';
+        mimeBase = mimeType.split(';')[0].trim() || 'application/octet-stream';
+        buffer = Buffer.from(match[2], 'base64');
+        originalName = clampText(name, 300, 'فایل');
+        folderId = typeof bodyFolderId === 'string' && bodyFolderId.trim() ? bodyFolderId.trim() : null;
+      }
+
+      if (buffer.length === 0) {
+        return res.status(400).json({ success: false, error: 'فایل خالی است' });
+      }
+
+      const db = readDB();
+      if (!Array.isArray(db.files)) db.files = [];
+
+      if (folderId && !(db.fileFolders || []).some((f) => f.id === folderId)) {
+        return res.status(400).json({ success: false, error: 'پوشه انتخاب‌شده یافت نشد.' });
+      }
+
+      const tgRes = await uploadFileToTelegram(buffer, originalName, mimeBase, {
+        forceDocument: true,
+        captionTag: 'NIVRA_FILE',
+      });
+
+      const now = new Date().toISOString();
+      const fileRecord = {
+        id: `file_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+        name: originalName,
+        mimeType: mimeBase,
+        size: buffer.length,
+        url: `/api/telegram/file/${tgRes.messageId}?filename=${encodeURIComponent(originalName)}`,
+        folderId,
+        storage: 'telegram' as const,
+        telegramMessageId: tgRes.messageId,
+        telegramChatId: status.chatId,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      db.files.unshift(fileRecord);
+      db.filesSyncedChatId = status.chatId;
+      if (!writeDB(db)) {
+        return res.status(500).json({ success: false, error: 'خطا در ثبت اطلاعات فایل' });
+      }
+
+      scheduleFilesIndexSync();
+      res.status(201).json({ success: true, file: fileRecord });
+    } catch (err: any) {
+      console.error('Telegram File Manager upload failed:', err);
+      res.status(502).json({
+        success: false,
+        error: `خطا در ذخیره فایل در کانال تلگرام: ${err.message || 'خطای اتصال'}`,
+      });
+    }
+  }
+);
+
+app.post('/api/files', (req, res) => {
+  const status = requireTelegramChannel(res);
+  if (!status) return;
+
+  const db = readDB();
+  if (!Array.isArray(db.files)) db.files = [];
+
+  const body = req.body || {};
+  const name = clampText(body.name, 300).trim();
+  const url = clampText(body.url, 1000).trim();
+  if (!name || !url || !url.startsWith('/api/telegram/file/')) {
+    return res.status(400).json({
+      success: false,
+      error: 'فایل‌ها باید در کانال تلگرام ذخیره شده باشند.',
+    });
+  }
+
+  const folderId = typeof body.folderId === 'string' && body.folderId.trim() ? body.folderId.trim() : null;
+  if (folderId && !(db.fileFolders || []).some((f) => f.id === folderId)) {
+    return res.status(400).json({ success: false, error: 'پوشه انتخاب‌شده یافت نشد.' });
+  }
+
+  const now = new Date().toISOString();
+  const telegramMessageId = Number(body.telegramMessageId) || extractTelegramMessageIdFromUrl(url);
+  const fileRecord = {
+    id: `file_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+    name,
+    mimeType: clampText(body.mimeType, 120, 'application/octet-stream'),
+    size: Number.isFinite(Number(body.size)) ? Math.max(0, Number(body.size)) : 0,
+    url,
+    folderId,
+    storage: 'telegram' as const,
+    telegramMessageId,
+    telegramChatId: status.chatId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  db.files.unshift(fileRecord);
+  db.filesSyncedChatId = status.chatId;
+  if (!writeDB(db)) {
+    return res.status(500).json({ success: false, error: 'خطا در ثبت فایل' });
+  }
+  scheduleFilesIndexSync();
+  res.status(201).json({ success: true, file: fileRecord });
+});
+
+app.patch('/api/files/:id', (req, res) => {
+  const status = requireTelegramChannel(res);
+  if (!status) return;
+
+  const db = readDB();
+  if (!Array.isArray(db.files)) db.files = [];
+  const file = db.files.find((f) => f.id === req.params.id);
+  if (!file) {
+    return res.status(404).json({ success: false, error: 'فایل یافت نشد.' });
+  }
+
+  if (req.body?.name !== undefined) {
+    const trimmed = clampText(req.body.name, 300).trim();
+    if (!trimmed) {
+      return res.status(400).json({ success: false, error: 'نام فایل نمی‌تواند خالی باشد.' });
+    }
+    file.name = trimmed;
+  }
+
+  if (req.body?.folderId !== undefined) {
+    const nextFolderId = typeof req.body.folderId === 'string' && req.body.folderId.trim()
+      ? req.body.folderId.trim()
+      : null;
+    if (nextFolderId && !(db.fileFolders || []).some((f) => f.id === nextFolderId)) {
+      return res.status(400).json({ success: false, error: 'پوشه مقصد یافت نشد.' });
+    }
+    file.folderId = nextFolderId;
+  }
+
+  file.updatedAt = new Date().toISOString();
+  if (!writeDB(db)) {
+    return res.status(500).json({ success: false, error: 'خطا در به‌روزرسانی فایل' });
+  }
+  scheduleFilesIndexSync();
+  res.json({ success: true, file });
+});
+
+app.delete('/api/files/:id', async (req, res) => {
+  const status = requireTelegramChannel(res);
+  if (!status) return;
+
+  const db = readDB();
+  if (!Array.isArray(db.files)) db.files = [];
+  const idx = db.files.findIndex((f) => f.id === req.params.id);
+  if (idx === -1) {
+    return res.status(404).json({ success: false, error: 'فایل یافت نشد.' });
+  }
+
+  const [removed] = db.files.splice(idx, 1);
+  if (!writeDB(db)) {
+    return res.status(500).json({ success: false, error: 'خطا در حذف فایل' });
+  }
+
+  scheduleFilesIndexSync();
+
+  // Delete from Telegram channel as well if not referenced by notes or another managed file
+  const msgId = Number(removed?.telegramMessageId) || extractTelegramMessageIdFromUrl(removed?.url);
+  if (msgId) {
+    const stillReferencedInNotes = db.notes.some(
+      (n) => Array.isArray(n.attachments) && n.attachments.some((a: any) => extractTelegramMessageIdFromUrl(a.url) === msgId)
+    );
+    const stillReferencedInFiles = db.files.some(
+      (f) => (Number(f.telegramMessageId) || extractTelegramMessageIdFromUrl(f.url)) === msgId
+    );
+    if (!stillReferencedInNotes && !stillReferencedInFiles) {
+      deleteFileFromTelegram(msgId).catch((err) => {
+        console.warn('Could not delete file message from Telegram channel:', err.message);
+      });
+    }
+  }
+
+  res.json({ success: true });
+});
+
+app.post('/api/files/folders', (req, res) => {
+  const status = requireTelegramChannel(res);
+  if (!status) return;
+
+  const db = readDB();
+  if (!Array.isArray(db.fileFolders)) db.fileFolders = [];
+
+  const name = clampText(req.body?.name, 100).trim();
+  if (!name) {
+    return res.status(400).json({ success: false, error: 'نام پوشه الزامی است.' });
+  }
+
+  const parentId = typeof req.body?.parentId === 'string' && req.body.parentId.trim()
+    ? req.body.parentId.trim()
+    : null;
+  if (parentId && !db.fileFolders.some((f) => f.id === parentId)) {
+    return res.status(400).json({ success: false, error: 'پوشه والد یافت نشد.' });
+  }
+
+  const folder = {
+    id: `fld_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+    name,
+    parentId,
+    telegramChatId: status.chatId,
+    createdAt: new Date().toISOString(),
+  };
+
+  db.fileFolders.push(folder);
+  if (!writeDB(db)) {
+    return res.status(500).json({ success: false, error: 'خطا در ایجاد پوشه' });
+  }
+  scheduleFilesIndexSync();
+  res.status(201).json({ success: true, folder });
+});
+
+app.patch('/api/files/folders/:id', (req, res) => {
+  const status = requireTelegramChannel(res);
+  if (!status) return;
+
+  const db = readDB();
+  if (!Array.isArray(db.fileFolders)) db.fileFolders = [];
+  const folder = db.fileFolders.find((f) => f.id === req.params.id);
+  if (!folder) {
+    return res.status(404).json({ success: false, error: 'پوشه یافت نشد.' });
+  }
+
+  const name = clampText(req.body?.name, 100).trim();
+  if (!name) {
+    return res.status(400).json({ success: false, error: 'نام پوشه نمی‌تواند خالی باشد.' });
+  }
+
+  folder.name = name;
+  if (!writeDB(db)) {
+    return res.status(500).json({ success: false, error: 'خطا در تغییر نام پوشه' });
+  }
+  scheduleFilesIndexSync();
+  res.json({ success: true, folder });
+});
+
+app.delete('/api/files/folders/:id', (req, res) => {
+  const status = requireTelegramChannel(res);
+  if (!status) return;
+
+  const db = readDB();
+  if (!Array.isArray(db.fileFolders)) db.fileFolders = [];
+  if (!Array.isArray(db.files)) db.files = [];
+
+  const idx = db.fileFolders.findIndex((f) => f.id === req.params.id);
+  if (idx === -1) {
+    return res.status(404).json({ success: false, error: 'پوشه یافت نشد.' });
+  }
+
+  const [removed] = db.fileFolders.splice(idx, 1);
+  const fallbackParentId = removed.parentId || null;
+
+  // Move any nested files and subfolders up to the parent folder so nothing is lost
+  for (const f of db.files) {
+    if (f.folderId === removed.id) {
+      f.folderId = fallbackParentId;
+      f.updatedAt = new Date().toISOString();
+    }
+  }
+  for (const sub of db.fileFolders) {
+    if (sub.parentId === removed.id) {
+      sub.parentId = fallbackParentId;
+    }
+  }
+
+  if (!writeDB(db)) {
+    return res.status(500).json({ success: false, error: 'خطا در حذف پوشه' });
+  }
+  scheduleFilesIndexSync();
   res.json({ success: true });
 });
 
@@ -1340,6 +2177,9 @@ app.get('/api/backup', (req, res) => {
   for (const note of db.notes) {
     for (const a of note.attachments || []) addFile(a.url, a.type);
   }
+  for (const f of db.files || []) {
+    addFile(f.url, f.mimeType);
+  }
 
   const backupData = {
     version: 1,
@@ -1353,6 +2193,8 @@ app.get('/api/backup', (req, res) => {
     },
     notes: db.notes,
     categories: db.categories,
+    files: db.files || [],
+    fileFolders: db.fileFolders || [],
     media,
   };
 
@@ -1411,6 +2253,23 @@ app.post('/api/restore', (req, res) => {
           currentDb.notes.push(note);
         }
       }
+
+      // Merge managed files & folders
+      if (Array.isArray(data.fileFolders)) {
+        if (!Array.isArray(currentDb.fileFolders)) currentDb.fileFolders = [];
+        const existingFolderIds = new Set(currentDb.fileFolders.map((f) => f.id));
+        for (const fld of data.fileFolders) {
+          if (!existingFolderIds.has(fld.id)) currentDb.fileFolders.push(fld);
+        }
+      }
+      if (Array.isArray(data.files)) {
+        if (!Array.isArray(currentDb.files)) currentDb.files = [];
+        const existingFileIds = new Set(currentDb.files.map((f) => f.id));
+        for (const f of data.files) {
+          if (!existingFileIds.has(f.id)) currentDb.files.push(f);
+        }
+      }
+
       writeDB(currentDb);
       restoreMedia();
       return res.json({
@@ -1425,6 +2284,8 @@ app.post('/api/restore', (req, res) => {
         version: 1,
         notes: data.notes,
         categories: data.categories,
+        files: Array.isArray(data.files) ? data.files : [],
+        fileFolders: Array.isArray(data.fileFolders) ? data.fileFolders : [],
         lastUpdated: new Date().toISOString(),
       };
       writeDB(newDb);

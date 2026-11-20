@@ -26,7 +26,9 @@ import rehypeHighlight from 'rehype-highlight';
 import hljs from 'highlight.js/lib/common';
 import 'highlight.js/styles/github-dark.css';
 import { PdfPlayer } from './PdfPlayer';
+import { AudioPlayer } from './blocks/AudioPlayer';
 import { NoteAttachment } from '../types';
+import { apiFetch } from '../services/api';
 import { useBackButton } from '../lib/useBackButton';
 import {
   getFileCategory,
@@ -100,7 +102,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
 
   // Fetch file contents for TXT, CODE, and MD files
   useEffect(() => {
-    if (category === 'office' || category === 'pdf') {
+    if (category === 'office' || category === 'pdf' || category === 'audio') {
       setLoading(false);
       return;
     }
@@ -119,7 +121,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
     setLoading(true);
     setError(null);
 
-    fetch(attachment.url)
+    (attachment.url.startsWith('/api/') ? apiFetch(attachment.url) : fetch(attachment.url))
       .then((res) => {
         if (!res.ok) throw new Error(`خطا در بارگذاری فایل (کد ${res.status})`);
         return res.text();
@@ -276,7 +278,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
   const isDirty = isEditing && editContent !== textContent;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
       <div
         className={`w-full bg-[#FAF9F6] dark:bg-[#151713] text-[#1A1C16] dark:text-[#E2E3DC] rounded-3xl border border-[#E1E4D5] dark:border-[#383C32] shadow-2xl flex flex-col overflow-hidden transition-all duration-300 relative ${
           isFullScreen ? 'h-full max-w-none rounded-none' : 'max-w-5xl h-[90vh]'
@@ -561,6 +563,18 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
                 <Download className="w-4 h-4" />
                 <span>دانلود مستقیم فایل</span>
               </a>
+            </div>
+          ) : category === 'audio' ? (
+            /* Dedicated In-App Audio Player */
+            <div className="flex-1 flex items-center justify-center p-6 sm:p-12">
+              <div className="w-full max-w-xl">
+                <AudioPlayer
+                  src={attachment.url}
+                  title={attachment.name}
+                  duration={attachment.duration}
+                  showDownload={true}
+                />
+              </div>
             </div>
           ) : category === 'pdf' ? (
             /* Dedicated PDF Player */

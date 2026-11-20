@@ -13,6 +13,9 @@ import {
   ShieldCheck,
   Send,
   Cloud,
+  LogOut,
+  HardDrive,
+  Lock,
 } from 'lucide-react';
 import { ThemeMode } from '../types';
 
@@ -25,10 +28,14 @@ interface NavbarProps {
   onOpenAdvancedSearch?: () => void;
   hasActiveAdvancedFilters?: boolean;
   onOpenBackup?: () => void;
+  onOpenFileManager?: () => void;
+  isTelegramReady?: boolean;
   onOpenCategoryManager?: () => void;
   onOpenTelegramStorage?: () => void;
   isSaving: boolean;
   notesCount: number;
+  username?: string;
+  onLogout?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -40,10 +47,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAdvancedSearch,
   hasActiveAdvancedFilters = false,
   onOpenBackup,
+  onOpenFileManager,
+  isTelegramReady = false,
   onOpenCategoryManager,
   onOpenTelegramStorage,
   notesCount,
+  username,
+  onLogout,
 }) => {
+  const displayName = username?.trim() || 'NIVRA';
+  const avatarChar = displayName[0]?.toUpperCase() || 'N';
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -161,19 +174,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             title="حساب کاربری و تنظیمات پشتیبان‌گیری"
             aria-label="پروفایل و تنظیمات"
           >
-            N
+            {avatarChar}
           </button>
 
           {/* User Profile / Quick Actions Dropdown */}
           {showUserMenu && (
             <div className="absolute top-full left-0 mt-2 z-50 bg-white dark:bg-[#1C1C17] rounded-2xl shadow-xl border border-[#E1E4D5] dark:border-[#43493E] p-3 w-64 animate-in fade-in zoom-in-95 duration-150">
               <div className="flex items-center gap-3 pb-3 border-b border-[#E1E4D5] dark:border-[#43493E]">
-                <div className="w-10 h-10 rounded-2xl bg-[#D0E8B2] text-[#1A3700] font-bold text-sm flex items-center justify-center shadow-xs">
-                  N
+                <div className="w-10 h-10 rounded-2xl bg-[#D0E8B2] text-[#1A3700] font-bold text-sm flex items-center justify-center shadow-xs shrink-0">
+                  {avatarChar}
                 </div>
                 <div className="flex flex-col min-w-0">
-                  <span className="font-bold text-xs text-[#1A1C16] dark:text-[#E2E3DC] truncate">
-                    NIVRA
+                  <span className="font-bold text-xs text-[#1A1C16] dark:text-[#E2E3DC] truncate" dir="auto">
+                    {displayName}
                   </span>
                   <span className="text-[11px] text-[#5E6258] dark:text-[#8F9285]">
                     {notesCount} یادداشت ذخیره‌شده
@@ -198,6 +211,25 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <span className="text-[10px] bg-[#0088cc]/15 text-[#0088cc] px-1.5 py-0.5 rounded-md font-bold">
                       MTProto
                     </span>
+                  </button>
+                )}
+
+                {onOpenFileManager && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      onOpenFileManager();
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-medium text-[#1A1C16] dark:text-[#E2E3DC] hover:bg-[#E8ECE0] dark:hover:bg-[#23261F] transition-colors text-right"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <HardDrive className="w-4 h-4 text-[#4A6D22] dark:text-[#D0E8B2]" />
+                      <span>مدیریت فایل‌ها</span>
+                    </div>
+                    {!isTelegramReady && (
+                      <Lock className="w-3.5 h-3.5 text-[#A64D3B] dark:text-[#FFAB91]" />
+                    )}
                   </button>
                 )}
 
@@ -248,6 +280,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                     {theme === 'dark' ? 'تاریک' : 'روشن'}
                   </span>
                 </button>
+
+                {onLogout && (
+                  <button
+                    id="btn-logout"
+                    type="button"
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      onLogout();
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-semibold text-[#A64D3B] dark:text-[#FFAB91] hover:bg-[#5C1A1A]/10 dark:hover:bg-[#5C1A1A]/30 transition-colors text-right"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>خروج از حساب کاربری</span>
+                  </button>
+                )}
               </div>
 
               <div className="pt-2 border-t border-[#E1E4D5] dark:border-[#43493E] flex items-center justify-between text-[10px] text-[#5E6258] dark:text-[#8F9285]">

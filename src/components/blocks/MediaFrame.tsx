@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { NoteAttachment } from '../../types';
 import { VideoPlayer } from './VideoPlayer';
+import { AudioPlayer } from './AudioPlayer';
 import { useDocumentViewer } from '../../context/DocumentViewerContext';
 import { isOfficeFile, isViewableDocument, getDocumentBadgeInfo } from '../../lib/fileViewerUtils';
 
@@ -145,42 +146,12 @@ export const MediaFrame: React.FC<MediaFrameProps> = ({
 
     if (attachment.type === 'audio') {
       return (
-        <div className="flex items-center gap-3 p-3 rounded-2xl bg-[#EDF5E0] dark:bg-[#232F1A] border border-[#D0E8B2] dark:border-[#3D522C]">
-          <audio
-            ref={audioRef}
-            src={attachment.url}
-            preload="metadata"
-            onEnded={() => setIsPlaying(false)}
-            onPause={() => setIsPlaying(false)}
-          />
-          <button
-            type="button"
-            onClick={toggleAudio}
-            className="w-11 h-11 shrink-0 rounded-2xl bg-[#4A6D22] text-white flex items-center justify-center hover:bg-[#3d5a1c] active:scale-95 transition-all"
-            title={isPlaying ? 'توقف' : 'پخش'}
-          >
-            {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="text-xs font-bold truncate text-[#1A1C16] dark:text-[#E2E3DC]">
-              {attachment.name}
-            </div>
-            <div className="text-[10px] text-[#5E6258] dark:text-[#8F9285] flex items-center gap-2">
-              <span>فایل صوتی</span>
-              {attachment.duration ? (
-                <span dir="ltr">{formatDuration(attachment.duration)}</span>
-              ) : null}
-            </div>
-          </div>
-          <a
-            href={attachment.url}
-            download={attachment.name}
-            className="p-2 rounded-xl text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-            title="دانلود فایل صوتی"
-          >
-            <Download className="w-4 h-4" />
-          </a>
-        </div>
+        <AudioPlayer
+          src={attachment.url}
+          title={caption || attachment.name}
+          duration={attachment.duration}
+          compact={compact}
+        />
       );
     }
 

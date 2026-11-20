@@ -33,71 +33,7 @@ export type BlockType =
   | 'media'
   | 'checklist'
   | 'table'
-  | 'mediaGallery'
-  | 'shape';
-
-export type ShapeKind =
-  | 'textbox'
-  | 'rect'
-  | 'roundedRect'
-  | 'circle'
-  | 'triangle'
-  | 'diamond'
-  | 'hexagon'
-  | 'arrow'
-  | 'leftArrow'
-  | 'doubleArrow'
-  | 'line'
-  | 'star'
-  | 'callout'
-  | 'cloud'
-  | 'heart'
-  | 'badge';
-
-export type ShapePatternType =
-  | 'none'
-  | 'dots'
-  | 'grid'
-  | 'stripes'
-  | 'stripes-diagonal'
-  | 'crosshatch'
-  | 'blueprint'
-  | 'waves';
-
-export interface ShapeConfig {
-  id?: string;
-  kind: ShapeKind;
-  color: string; // fill color / start color
-  fillTransparent?: boolean;
-  gradient?: boolean; // two-color linear gradient enable
-  gradientEndColor?: string; // gradient end color
-  gradientAngle?: number; // 0 to 360 degrees
-  pattern?: ShapePatternType; // background texture pattern
-  patternColor?: string; // color of pattern strokes/dots
-  patternScale?: number; // scale multiplier for pattern density
-  strokeColor?: string; // border/line color
-  strokeWidth?: number; // border width in px
-  borderStyle?: 'solid' | 'dashed' | 'dotted';
-  radius?: number; // corner radius for rects
-  opacity?: number; // 0.0 to 1.0 (or 0 to 100)
-  width?: number; // in px
-  height?: number; // in px
-  aspectLocked?: boolean;
-  rotation?: number; // 0 to 360 degrees
-  zIndex?: number; // layer stack order
-  align?: 'center' | 'start' | 'end' | 'float-right' | 'float-left' | 'full';
-  layerPosition?: 'inline' | 'behind' | 'in-front' | 'float-left' | 'float-right'; // Behind content, In front of content, or Inline flow
-  posX?: number; // X coordinate offset for free drag movement
-  posY?: number; // Y coordinate offset for free drag movement
-  text?: string; // optional text inside shape (Word-like)
-  textColor?: string;
-  textSize?: number;
-  textBold?: boolean;
-  textAlign?: 'center' | 'right' | 'left'; // text alignment in shape/textbox
-  shadow?: boolean;
-  shadowType?: 'none' | 'soft' | '3d' | 'deep' | 'glow'; // 3D and depth lighting effects
-  visible?: boolean;
-}
+  | 'mediaGallery';
 
 export type CalloutTone = 'info' | 'success' | 'warning' | 'danger' | 'tip';
 
@@ -135,8 +71,6 @@ export interface NoteBlock {
   items?: ChecklistItem[];
   table?: TableData;
   gallery?: MediaGalleryData;
-  shape?: ShapeConfig;
-  shapes?: ShapeConfig[];
 }
 
 export interface Note {
@@ -236,4 +170,35 @@ export interface TelegramConfig {
   chatId: string;
   autoSyncDb: boolean;
   lastSyncAt?: string;
+  filesIndexMessageId?: number;
+  filesIndexChatId?: string;
 }
+
+export interface AuthStatus {
+  configured: boolean;
+  authenticated: boolean;
+  username?: string;
+}
+
+export interface ManagedFolder {
+  id: string;
+  name: string;
+  parentId?: string | null;
+  telegramChatId?: string;
+  createdAt: string;
+}
+
+export interface ManagedFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  url: string;
+  folderId?: string | null;
+  storage?: 'local' | 'telegram';
+  telegramMessageId?: number;
+  telegramChatId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+

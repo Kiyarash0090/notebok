@@ -3,14 +3,16 @@ import { Plus, Minus } from 'lucide-react';
 import { TableData } from '../../types';
 import { reshapeTableData } from '../../lib/blocks';
 import { TABLE_COLORS, TABLE_COLOR_MAP } from '../../constants';
+import { RichInlineEditor } from './RichInlineEditor';
 
 interface TableEditorProps {
   data: TableData;
   active: boolean;
   onUpdate: (data: TableData) => void;
+  searchQuery?: string;
 }
 
-export const TableEditor: React.FC<TableEditorProps> = ({ data, active, onUpdate }) => {
+export const TableEditor: React.FC<TableEditorProps> = ({ data, active, onUpdate, searchQuery }) => {
   const [selStart, setSelStart] = useState<number | null>(null);
   const [selEnd, setSelEnd] = useState<number | null>(null);
   const dragRef = useRef<false | number>(false); // dragging start index while a range is being dragged
@@ -171,10 +173,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({ data, active, onUpdate
                         header && r === 0 ? 'bg-black/[0.04] dark:bg-white/[0.06] font-bold' : ''
                       }`}
                     >
-                      <div
-                        contentEditable
-                        suppressContentEditableWarning
-                        onInput={(e) => setCell(idx, { text: e.currentTarget.innerText })}
+                      <RichInlineEditor
+                        value={cell.text}
+                        onChange={(nextText) => setCell(idx, { text: nextText })}
                         onKeyDown={(e) => handleCellKeyDown(e, idx)}
                         onBeforeInput={(e) => handleCellBeforeInput(e, idx)}
                         onMouseDown={(e) => {
@@ -186,11 +187,11 @@ export const TableEditor: React.FC<TableEditorProps> = ({ data, active, onUpdate
                           setSelStart(idx);
                           setSelEnd(idx);
                         }}
-                        ref={(el) => {
+                        editorRef={(el) => {
                           cellRefs.current[idx] = el;
-                          if (el && el.innerText !== cell.text) el.innerText = cell.text;
                         }}
-                        className="min-w-8 min-h-6 px-2 py-1 outline-none whitespace-pre-wrap break-words text-[#1A1C16] dark:text-[#E2E3DC]"
+                        searchQuery={searchQuery}
+                        className="min-w-8 min-h-6 px-2 py-1 text-[#1A1C16] dark:text-[#E2E3DC]"
                       />
                     </td>
                   );

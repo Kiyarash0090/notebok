@@ -21,6 +21,7 @@ import {
 import { NoteAttachment, AttachmentType, AttachmentPosition } from '../types';
 import { BatchUploadProgress, uploadMediaFiles } from '../lib/media';
 import { UploadProgressBar } from './UploadProgressBar';
+import { AudioPlayer } from './blocks/AudioPlayer';
 import { useDocumentViewer } from '../context/DocumentViewerContext';
 import { isOfficeFile, isViewableDocument, getDocumentBadgeInfo } from '../lib/fileViewerUtils';
 
@@ -372,28 +373,12 @@ export const AttachmentManager: React.FC<AttachmentManagerProps> = ({
                   )}
 
                   {att.type === 'audio' && (
-                    <div className="flex items-center gap-2.5 p-2 rounded-xl bg-[#F5F6EE] dark:bg-[#23261F] border border-[#E1E4D5] dark:border-[#43493E]">
-                      <button
-                        type="button"
-                        onClick={() => toggleAudioPlay(att)}
-                        className="w-8 h-8 rounded-full bg-[#D0E8B2] text-[#1A3700] flex items-center justify-center shrink-0 shadow-xs hover:scale-105 transition-transform"
-                        title={playingAudioId === att.id ? 'توقف پخش' : 'پخش صوت'}
-                      >
-                        {playingAudioId === att.id ? (
-                          <Pause className="w-3.5 h-3.5" />
-                        ) : (
-                          <Play className="w-3.5 h-3.5 mr-0.5" />
-                        )}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-bold truncate text-[#1A1C16] dark:text-[#E2E3DC]">
-                          {att.name}
-                        </div>
-                        <div className="text-[10px] text-[#5E6258] dark:text-[#8F9285]">
-                          {att.duration ? formatSeconds(att.duration) : 'صدا'} • {formatFileSize(att.size)}
-                        </div>
-                      </div>
-                    </div>
+                    <AudioPlayer
+                      src={att.url}
+                      title={att.name}
+                      duration={att.duration}
+                      showDownload={false}
+                    />
                   )}
 
                   {att.type === 'document' && (

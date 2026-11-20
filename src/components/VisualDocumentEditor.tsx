@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { VideoPlayerModal } from './VideoPlayerModule';
 import { MathRenderer } from './MathRenderer';
+import { AudioPlayer } from './blocks/AudioPlayer';
 
 export interface VisualBlock {
   id: string;
@@ -28,6 +29,7 @@ export interface VisualBlock {
   name?: string;
   title?: string;
   width?: number;
+  duration?: number;
 }
 
 export function parseContentToBlocks(content: string): VisualBlock[] {
@@ -152,7 +154,7 @@ export interface VisualDocumentEditorRef {
   insertSnippet: (snippet: string) => void;
   insertLatex: (formula: string) => void;
   insertMediaBlock: (file: File) => void;
-  insertAudioBlock: (base64: string, title: string) => void;
+  insertAudioBlock: (base64: string, title: string, duration?: number) => void;
 }
 
 interface VisualDocumentEditorProps {
@@ -425,12 +427,13 @@ export const VisualDocumentEditor = React.forwardRef<VisualDocumentEditorRef, Vi
         processAndInsertMediaFile(file);
       },
 
-      insertAudioBlock: (base64: string, title: string) => {
+      insertAudioBlock: (base64: string, title: string, duration?: number) => {
         const newAudioBlock: VisualBlock = {
           id: 'block-' + Math.random().toString(36).slice(2, 9),
           type: 'audio',
           src: base64,
           title,
+          duration,
         };
 
         const followUpTextBlock: VisualBlock = {
@@ -655,61 +658,14 @@ export const VisualDocumentEditor = React.forwardRef<VisualDocumentEditorRef, Vi
 
           // Audio / Voice Block
           if (block.type === 'audio' && block.src) {
-            const isPlaying = playingAudioId === block.id;
             return (
-              <div
-                key={block.id}
-                className="relative my-3 p-3 rounded-2xl bg-[#E8ECE0] dark:bg-[#23261F] border border-[#E1E4D5] dark:border-[#43493E] shadow-xs flex items-center justify-between gap-3"
-              >
-                <audio
-                  ref={(el) => {
-                    audioRefs.current[block.id] = el;
-                  }}
+              <div key={block.id} className="relative my-3">
+                <AudioPlayer
                   src={block.src}
-                  onEnded={() => setPlayingAudioId(null)}
-                  preload="none"
+                  title={block.title || 'ویس صوتی'}
+                  duration={block.duration}
+                  onDelete={() => handleDeleteBlock(block.id)}
                 />
-                <div className="flex items-center gap-3 min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => toggleAudio(block.id)}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shrink-0 shadow-sm ${
-                      isPlaying
-                        ? 'bg-red-600 text-white animate-pulse'
-                        : 'bg-[#4A6D22] text-white hover:scale-105 active:scale-95'
-                    }`}
-                  >
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 mr-0.5" />}
-                  </button>
-
-                  <div className="flex flex-col min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs sm:text-sm font-bold text-[#1A1C16] dark:text-[#E2E3DC] truncate max-w-[200px] sm:max-w-xs">
-                        {block.title || 'ویس صوتی'}
-                      </span>
-                      {isPlaying && (
-                        <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 text-[10px] font-bold rounded-full animate-pulse">
-                          در حال پخش
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[11px] text-[#5E6258] dark:text-[#8F9285] flex items-center gap-1 mt-0.5">
-                      <Mic className="w-3 h-3 text-[#A64D3B] dark:text-[#FFAB91]" />
-                      یادداشت صوتی پیوست‌شده در متن
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteBlock(block.id)}
-                    className="p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 transition-colors"
-                    title="حذف ویس"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
               </div>
             );
           }

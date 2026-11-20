@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Bold,
   Italic,
@@ -18,117 +18,76 @@ import {
   Mic,
   ClipboardPaste,
   Minus,
-  Square,
-  Circle,
-  Triangle,
-  ArrowRight,
-  ArrowLeft,
-  MoveHorizontal,
-  Star,
-  MessageSquare,
-  Cloud,
-  Heart,
-  Award,
-  Layers,
   ChevronDown,
-  Shapes,
-  Sparkles,
+  Undo2,
+  Redo2,
+  Check,
 } from 'lucide-react';
-import { NoteBlock, ShapeKind } from '../../types';
+import { NoteBlock } from '../../types';
+import { HIGHLIGHT_COLOR_LIST, HIGHLIGHT_COLORS, HighlightColorId } from '../../lib/richText';
 
 interface EditorToolbarProps {
   onCommand: (command: string) => void;
   onInsertBlock: (type: NoteBlock['type'], overrides?: Partial<NoteBlock>) => void;
-  onInsertShape?: (kind: ShapeKind) => void;
   onAddMedia: () => void;
   onRecord: () => void;
   onImportText: () => void;
+  activeMarks?: Set<string>;
+  highlightColor?: HighlightColorId;
+  onSelectHighlightColor?: (color: HighlightColorId) => void;
+  activeHighlightColor?: HighlightColorId | null;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 const groupClass = 'flex items-center gap-0.5 bg-[#EDEEEB] dark:bg-[#1C1C17] rounded-2xl p-1 shrink-0';
 const btnClass =
   'w-8 h-8 rounded-xl flex items-center justify-center text-[#3F4A35] dark:text-[#BCC2B2] hover:bg-[#D0E8B2] dark:hover:bg-[#324B10] hover:text-[#1A3700] dark:hover:text-[#D0E8B2] transition-all active:scale-90';
 
-const SHAPE_CATEGORIES: {
-  category: string;
-  items: { kind: ShapeKind; label: string; icon: React.ReactNode }[];
-}[] = [
-  {
-    category: 'کادر متنی و اشکال پایه',
-    items: [
-      { kind: 'textbox', label: 'کادر متنی (Text Box)', icon: <Type className="w-4 h-4 text-[#4A6D22] dark:text-[#D0E8B2]" /> },
-      { kind: 'rect', label: 'مستطیل', icon: <Square className="w-4 h-4" /> },
-      { kind: 'roundedRect', label: 'گوشه‌گرد', icon: <Square className="w-4 h-4 rounded-md" /> },
-      { kind: 'circle', label: 'دایره', icon: <Circle className="w-4 h-4" /> },
-      { kind: 'triangle', label: 'مثلث', icon: <Triangle className="w-4 h-4" /> },
-      { kind: 'diamond', label: 'لوزی', icon: <Layers className="w-4 h-4 rotate-45" /> },
-      { kind: 'hexagon', label: 'شش‌ضلعی', icon: <Layers className="w-4 h-4" /> },
-    ],
-  },
-  {
-    category: 'فلش‌ها و خطوط',
-    items: [
-      { kind: 'arrow', label: 'فلش جلو', icon: <ArrowLeft className="w-4 h-4" /> },
-      { kind: 'leftArrow', label: 'فلش برگشت', icon: <ArrowRight className="w-4 h-4" /> },
-      { kind: 'doubleArrow', label: 'فلش دوطرفه', icon: <MoveHorizontal className="w-4 h-4" /> },
-      { kind: 'line', label: 'خط جداکننده', icon: <Minus className="w-4 h-4" /> },
-    ],
-  },
-  {
-    category: 'برچسب و نمادها',
-    items: [
-      { kind: 'callout', label: 'کادر پیام', icon: <MessageSquare className="w-4 h-4" /> },
-      { kind: 'cloud', label: 'ابر اندیشه', icon: <Cloud className="w-4 h-4" /> },
-      { kind: 'star', label: 'ستاره', icon: <Star className="w-4 h-4" /> },
-      { kind: 'heart', label: 'قلب', icon: <Heart className="w-4 h-4" /> },
-      { kind: 'badge', label: 'مدال / روبان', icon: <Award className="w-4 h-4" /> },
-    ],
-  },
-];
-
 export const EditorToolbar: React.FC<EditorToolbarProps> = ({
   onCommand,
   onInsertBlock,
-  onInsertShape,
   onAddMedia,
   onRecord,
   onImportText,
+  activeMarks,
+  highlightColor = 'yellow',
+  onSelectHighlightColor,
+  activeHighlightColor,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
 }) => {
-  const [shapesMenuOpen, setShapesMenuOpen] = useState(false);
-  const shapesMenuRef = useRef<HTMLDivElement | null>(null);
+  const [highlightMenuPos, setHighlightMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const highlightTriggerRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
-      if (shapesMenuRef.current && !shapesMenuRef.current.contains(e.target as Node)) {
-        setShapesMenuOpen(false);
-      }
-    };
-    if (shapesMenuOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('touchstart', handleClickOutside);
+  const toggleHighlightMenu = () => {
+    if (highlightMenuPos) {
+      setHighlightMenuPos(null);
+      return;
     }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('touchstart', handleClickOutside);
-    };
-  }, [shapesMenuOpen]);
-
-  const handleSelectShape = (kind: ShapeKind) => {
-    if (onInsertShape) {
-      onInsertShape(kind);
-    } else {
-      onInsertBlock('shape', { shape: { kind, color: '#4A6D22' } });
-    }
-    setShapesMenuOpen(false);
+    const rect = highlightTriggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const menuWidth = 176;
+    const clampedLeft = Math.max(
+      12,
+      Math.min(window.innerWidth - menuWidth - 12, rect.left + rect.width / 2 - menuWidth / 2)
+    );
+    setHighlightMenuPos({
+      top: rect.bottom + 8,
+      left: clampedLeft,
+    });
   };
 
-  const marks: { key: string; title: string; icon: React.ReactNode }[] = [
+  const preHighlightMarks: { key: string; title: string; icon: React.ReactNode }[] = [
     { key: 'bold', title: 'ضخیم (Ctrl+B)', icon: <Bold className="w-4 h-4" /> },
     { key: 'italic', title: 'مورب (Ctrl+I)', icon: <Italic className="w-4 h-4" /> },
     { key: 'strike', title: 'خط‌خورده (Ctrl+Shift+X)', icon: <Strikethrough className="w-4 h-4" /> },
-    { key: 'highlight', title: 'خط‌کشی / هایلایت', icon: <Highlighter className="w-4 h-4" /> },
-    { key: 'code', title: 'کد درون‌خطی', icon: <Code className="w-4 h-4" /> },
   ];
+  const currentSwatchColor = HIGHLIGHT_COLORS[activeHighlightColor || highlightColor].swatch;
 
   const blocks: { title: string; icon: React.ReactNode; run: () => void }[] = [
     { title: 'متن ساده', icon: <Type className="w-4 h-4" />, run: () => onInsertBlock('paragraph') },
@@ -151,115 +110,154 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
     { title: 'جداکننده', icon: <Minus className="w-4 h-4" />, run: () => onInsertBlock('divider') },
   ];
 
-  // Quick shapes for direct one-click insertion from toolbar
-  const quickShapes: { key: ShapeKind; title: string; icon: React.ReactNode }[] = [
-    { key: 'textbox', title: 'کادر متنی آزاد (Text Box)', icon: <Type className="w-4 h-4" /> },
-    { key: 'rect', title: 'مستطیل', icon: <Square className="w-4 h-4" /> },
-    { key: 'circle', title: 'دایره', icon: <Circle className="w-4 h-4" /> },
-    { key: 'arrow', title: 'فلش', icon: <ArrowLeft className="w-4 h-4" /> },
-    { key: 'star', title: 'ستاره', icon: <Star className="w-4 h-4" /> },
-  ];
-
   return (
     <div data-toolbar className="sticky top-0 z-40 py-2 bg-[#FAF9F5]/95 dark:bg-[#12140E]/95 backdrop-blur-md">
       <div className="flex items-center gap-1.5 sm:gap-2 flex-nowrap overflow-x-auto md:flex-wrap md:overflow-x-visible">
+        {/* Undo / Redo */}
+        {(onUndo || onRedo) && (
+          <>
+            <div className={groupClass}>
+              <button
+                type="button"
+                disabled={!canUndo}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onUndo?.()}
+                className={`${btnClass} disabled:opacity-35 disabled:pointer-events-none`}
+                title="بازگشت (Ctrl+Z)"
+              >
+                <Undo2 className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                disabled={!canRedo}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onRedo?.()}
+                className={`${btnClass} disabled:opacity-35 disabled:pointer-events-none`}
+                title="تکرار تغییر (Ctrl+Y)"
+              >
+                <Redo2 className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="w-px h-6 shrink-0 bg-[#E1E4D5] dark:bg-[#43493E]" />
+          </>
+        )}
+
         {/* Formatting Marks */}
         <div className={groupClass}>
-          {marks.map((m) => (
-            <button
-              key={m.key}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onCommand(m.key)}
-              className={btnClass}
-              title={m.title}
-            >
-              {m.icon}
-            </button>
-          ))}
-        </div>
-
-        <div className="w-px h-6 shrink-0 bg-[#E1E4D5] dark:bg-[#43493E]" />
-
-        {/* Word-like Shapes Menu & Quick Tools */}
-        <div className="relative shrink-0" ref={shapesMenuRef}>
-          <div className={groupClass}>
-            {/* Shapes Dropdown Trigger */}
-            <button
-              type="button"
-              onClick={() => setShapesMenuOpen((prev) => !prev)}
-              className="flex items-center gap-1 px-2 h-8 rounded-xl bg-[#D0E8B2]/50 dark:bg-[#324B10]/50 text-[#1A3700] dark:text-[#D0E8B2] hover:bg-[#D0E8B2] text-xs font-bold transition-all"
-              title="اشکال (Word Shapes)"
-            >
-              <Shapes className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">اشکال</span>
-              <ChevronDown className="w-3 h-3 opacity-70" />
-            </button>
-
-            {/* Quick direct shape buttons */}
-            {quickShapes.map((s) => (
+          {preHighlightMarks.map((m) => {
+            const isActive = activeMarks?.has(m.key);
+            return (
               <button
-                key={s.key}
+                key={m.key}
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => handleSelectShape(s.key)}
-                className={btnClass}
-                title={`افزودن ${s.title} به بلوک فعال`}
+                onClick={() => onCommand(m.key)}
+                className={`${btnClass} ${
+                  isActive ? 'bg-[#D0E8B2] dark:bg-[#324B10] text-[#1A3700] dark:text-[#D0E8B2] shadow-2xs' : ''
+                }`}
+                title={m.title}
               >
-                {s.icon}
+                {m.icon}
               </button>
-            ))}
+            );
+          })}
+
+          {/* Multi-color Highlighter button + color dropdown */}
+          <div ref={highlightTriggerRef} className="flex items-center">
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onCommand(`highlight:${highlightColor}`)}
+              className={`relative ${btnClass} ${
+                activeMarks?.has('highlight')
+                  ? 'bg-[#D0E8B2] dark:bg-[#324B10] text-[#1A3700] dark:text-[#D0E8B2] shadow-2xs'
+                  : ''
+              }`}
+              title={`هایلایت ${HIGHLIGHT_COLORS[highlightColor].label}`}
+            >
+              <Highlighter className="w-4 h-4" />
+              <span
+                className="absolute bottom-1 inset-x-2 h-[3px] rounded-full border border-black/15"
+                style={{ backgroundColor: currentSwatchColor }}
+              />
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={toggleHighlightMenu}
+              className="w-5 h-8 rounded-lg flex items-center justify-center text-[#5E6258] dark:text-[#8F9285] hover:bg-[#D0E8B2]/70 dark:hover:bg-[#324B10]/70 transition-colors"
+              title="انتخاب رنگ هایلایت"
+            >
+              <ChevronDown className="w-3 h-3" />
+            </button>
           </div>
 
-          {/* Word-like Shapes Popover Menu */}
-          {shapesMenuOpen && (
-            <>
-              {/* Tap anywhere outside to close menu backdrop */}
-              <div
-                className="fixed inset-0 z-[90] bg-black/5 sm:bg-transparent"
-                onClick={() => setShapesMenuOpen(false)}
-                onTouchStart={() => setShapesMenuOpen(false)}
-              />
-              <div
-                className="fixed sm:absolute top-20 sm:top-full right-3 sm:right-0 left-3 sm:left-auto mt-2 max-w-[calc(100vw-1.5rem)] sm:w-80 bg-[#FAF9F5] dark:bg-[#1C1C17] border border-[#E1E4D5] dark:border-[#43493E] rounded-3xl shadow-2xl p-3 z-[100] animate-fade-in space-y-3"
-                dir="rtl"
-              >
-              <div className="flex items-center justify-between border-b border-[#E1E4D5] dark:border-[#43493E] pb-2 px-1">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#1A1C16] dark:text-[#E2E3DC]">
-                  <Sparkles className="w-3.5 h-3.5 text-[#4A6D22] dark:text-[#D0E8B2]" />
-                  <span>اشکال مایکروسافت ورد (Shapes)</span>
-                </div>
-                <span className="text-[10px] text-[#8F9285]">درون بلوک فعال</span>
-              </div>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onCommand('code')}
+            className={`${btnClass} ${
+              activeMarks?.has('code')
+                ? 'bg-[#D0E8B2] dark:bg-[#324B10] text-[#1A3700] dark:text-[#D0E8B2] shadow-2xs'
+                : ''
+            }`}
+            title="کد درون‌خطی"
+          >
+            <Code className="w-4 h-4" />
+          </button>
+        </div>
 
-              <div className="space-y-2.5 max-h-72 overflow-y-auto pr-0.5">
-                {SHAPE_CATEGORIES.map((cat) => (
-                  <div key={cat.category} className="space-y-1">
-                    <span className="text-[10px] font-bold text-[#5E6258] dark:text-[#8F9285] px-1 block">
-                      {cat.category}
-                    </span>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {cat.items.map((item) => (
-                        <button
-                          key={item.kind}
-                          type="button"
-                          onClick={() => handleSelectShape(item.kind)}
-                          className="flex items-center gap-1.5 p-2 rounded-xl bg-white dark:bg-[#141510] border border-[#E1E4D5] dark:border-[#43493E] hover:bg-[#D0E8B2]/40 dark:hover:bg-[#4A6D22]/30 hover:border-[#4A6D22] text-[#3F4A35] dark:text-[#BCC2B2] text-right transition-colors"
-                        >
-                          <div className="w-5 h-5 flex items-center justify-center shrink-0 text-[#4A6D22] dark:text-[#D0E8B2]">
-                            {item.icon}
-                          </div>
-                          <span className="text-[11px] truncate font-medium">{item.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+        {highlightMenuPos && (
+          <>
+            <div
+              className="fixed inset-0 z-[90]"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setHighlightMenuPos(null)}
+              onTouchStart={() => setHighlightMenuPos(null)}
+            />
+            <div
+              data-toolbar="highlight-palette"
+              onMouseDown={(e) => e.preventDefault()}
+              style={{ top: `${highlightMenuPos.top}px`, left: `${highlightMenuPos.left}px` }}
+              className="fixed z-[100] w-44 bg-[#FAF9F5] dark:bg-[#1C1C17] border border-[#E1E4D5] dark:border-[#43493E] rounded-2xl shadow-2xl p-2 anim-scale-in"
+              dir="rtl"
+            >
+              <div className="text-[10px] font-bold text-[#5E6258] dark:text-[#8F9285] px-1.5 pb-1.5">
+                رنگ هایلایت
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                {HIGHLIGHT_COLOR_LIST.map((cid) => {
+                  const cfg = HIGHLIGHT_COLORS[cid];
+                  const isSelected = (activeHighlightColor || highlightColor) === cid;
+                  return (
+                    <button
+                      key={cid}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        onSelectHighlightColor?.(cid);
+                        setHighlightMenuPos(null);
+                      }}
+                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-xl text-[11px] font-bold transition-colors ${
+                        isSelected
+                          ? 'bg-[#D0E8B2]/60 dark:bg-[#324B10]/70 text-[#1A3700] dark:text-[#D0E8B2]'
+                          : 'hover:bg-black/5 dark:hover:bg-white/10 text-[#1A1C16] dark:text-[#E2E3DC]'
+                      }`}
+                    >
+                      <span
+                        className="w-4 h-4 rounded-full border border-black/15 shrink-0 flex items-center justify-center"
+                        style={{ backgroundColor: cfg.swatch }}
+                      >
+                        {isSelected && <Check className="w-2.5 h-2.5 text-[#1A1C16]" />}
+                      </span>
+                      <span>{cfg.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
-            </>
-          )}
-        </div>
+          </>
+        )}
 
         <div className="w-px h-6 shrink-0 bg-[#E1E4D5] dark:bg-[#43493E]" />
 

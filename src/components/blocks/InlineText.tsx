@@ -1,5 +1,6 @@
 import React from 'react';
 import { MathRenderer } from '../MathRenderer';
+import { getHighlightColorConfig } from '../../lib/richText';
 
 interface InlineTextProps {
   text: string;
@@ -46,14 +47,14 @@ const ATOMIC_PATTERN_MATH =
   '|(\\\\[\\x28\\x29][\\s\\S]*?\\\\[\\x28\\x29])' +
   '|(\\\\begin\\{[a-zA-Z0-9_*]+\\}[\\s\\S]*?\\\\end\\{[a-zA-Z0-9_*]+\\})' +
   '|((?:(?:\\d+[\\.\\,]?\\d*\\s*)?\\\\[a-zA-Z]+(?:\\{[^\\}\\n]*\\}|\\[[^\\]\\n]*\\])*(?:\\s*(?:[\\+\\-\\*/=\\>\\<]|\\\\(?:rightarrow|leftarrow|Rightarrow|Leftarrow|to|times|div|le|ge|ne|approx|in|cdot)\\b|\\rightarrow|\\leftarrow|\\&)\\s*(?:\\d+[\\.\\,]?\\d*\\s*)?(?:\\\\[a-zA-Z]+(?:\\{[^\\}\\n]*\\}|\\[[^\\]\\n]*\\])*|[a-zA-Z0-9]+))*)+)' +
-  '|(<mark>[\\s\\S]*?<\\/mark>)' +
+  '|(<mark(?:\\s+data-color="[a-z]+")?>[\\s\\S]*?<\\/mark>)' +
   '|(<code>[\\s\\S]*?<\\/code>)' +
   '|(<u>[\\s\\S]*?<\\/u>)' +
   '|(<del>[\\s\\S]*?<\\/del>)' +
   '|(<s>[\\s\\S]*?<\\/s>)';
 
 const ATOMIC_PATTERN_NO_MATH =
-  '(`[^`\\n]+`)|(<mark>[\\s\\S]*?<\\/mark>)|(<code>[\\s\\S]*?<\\/code>)|(<u>[\\s\\S]*?<\\/u>)|(<del>[\\s\\S]*?<\\/del>)|(<s>[\\s\\S]*?<\\/s>)';
+  '(`[^`\\n]+`)|(<mark(?:\\s+data-color="[a-z]+")?>[\\s\\S]*?<\\/mark>)|(<code>[\\s\\S]*?<\\/code>)|(<u>[\\s\\S]*?<\\/u>)|(<del>[\\s\\S]*?<\\/del>)|(<s>[\\s\\S]*?<\\/s>)';
 
 // Pair patterns: allow flexible content including trimmed whitespace
 // Delimiters: ==highlight==, ***bold italic***, **bold**, ~~strike~~, __underline__
@@ -242,6 +243,7 @@ export const InlineText: React.FC<InlineTextProps> = ({
         }
 
         const token = m[0];
+        const tokenIdx = i++;
 
         // Check if token is an inline math formula
         const isMathToken =
@@ -251,17 +253,20 @@ export const InlineText: React.FC<InlineTextProps> = ({
             /^\d+[\.\,]?\d*\s*\\/.test(token));
 
         if (isMathToken) {
+          const elKey = `m${lineIdx}-${tokenIdx}`;
           out.push({
-            key: `m${lineIdx}-${i++}`,
-            node: <MathRenderer key={`math-inline-${lineIdx}-${i}`} text={token} inline={true} />,
+            key: elKey,
+            node: <MathRenderer key={elKey} text={token} inline={true} />,
           });
         } else if (token.startsWith('`')) {
           // Inline Code `...`
+          const elKey = `c${lineIdx}-${tokenIdx}`;
           const codeContent = token.slice(1, -1);
           out.push({
-            key: `c${lineIdx}-${i++}`,
+            key: elKey,
             node: (
               <code
+                key={elKey}
                 className="px-1.5 py-0.5 rounded-md bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#E2E8F0] border border-[#CBD5E1] dark:border-[#475569] font-mono text-[0.88em] shadow-[0_1px_1px_rgba(0,0,0,0.03)] print:bg-[#F1F5F9] print:text-[#0F172A] print:border-[#CBD5E1]"
                 style={{
                   backgroundColor: isPrint ? '#F1F5F9' : undefined,
@@ -272,36 +277,47 @@ export const InlineText: React.FC<InlineTextProps> = ({
                 }}
                 data-mark="code"
               >
-                {applySearchHighlight(codeContent, highlightQuery, `ic${lineIdx}-${i}`)}
+                {applySearchHighlight(codeContent, highlightQuery, `ic${lineIdx}-${tokenIdx}`)}
               </code>
             ),
           });
-        } else if (token.startsWith('<mark>')) {
-          const inner = token.replace(/^<mark>|<\/mark>$/gi, '');
+        } else if (/^<mark(?:\s+data-color="([a-z]+)")?>/i.test(token)) {
+          const elKey = `hm${lineIdx}-${tokenIdx}`;
+          const markMatch = token.match(/^<mark(?:\s+data-color="([a-z]+)")?>([\s\S]*?)<\/mark>$/i);
+          const colorCfg = getHighlightColorConfig(markMatch?.[1]);
+          const inner = markMatch?.[2] || '';
           out.push({
-            key: `hm${lineIdx}-${i++}`,
+            key: elKey,
             node: (
               <mark
-                className={`px-1 py-0.5 rounded bg-[#FEF08A] ${isPrint ? 'text-[#1A1C16]' : 'dark:bg-[#EAB308]/40 text-[#1A1C16] dark:text-[#FEF9C3]'} font-semibold border border-[#FACC15]/70 print:bg-[#FEF08A] print:text-[#1A1C16] print:border-[#FACC15]`}
+                key={elKey}
+                className={
+                  isPrint
+                    ? 'px-1 py-0.5 rounded font-semibold border'
+                    : colorCfg.className
+                }
                 style={{
-                  backgroundColor: isPrint ? '#FEF08A' : undefined,
-                  color: isPrint ? '#1A1C16' : undefined,
-                  borderColor: isPrint ? '#FACC15' : undefined,
+                  backgroundColor: isPrint ? colorCfg.printBg : undefined,
+                  color: isPrint ? colorCfg.printText : undefined,
+                  borderColor: isPrint ? colorCfg.printBorder : undefined,
                   WebkitPrintColorAdjust: 'exact',
                   printColorAdjust: 'exact',
                 }}
                 data-mark="highlight"
+                data-color={colorCfg.id}
               >
-                {applySearchHighlight(inner, highlightQuery, `hm${lineIdx}-${i}`)}
+                {renderEmphasis(inner, elKey, isPrint, highlightQuery)}
               </mark>
             ),
           });
         } else if (token.startsWith('<code>')) {
+          const elKey = `hc${lineIdx}-${tokenIdx}`;
           const inner = token.replace(/^<code>|<\/code>$/gi, '');
           out.push({
-            key: `hc${lineIdx}-${i++}`,
+            key: elKey,
             node: (
               <code
+                key={elKey}
                 className="px-1.5 py-0.5 rounded-md bg-[#F1F5F9] dark:bg-[#1E293B] text-[#0F172A] dark:text-[#E2E8F0] border border-[#CBD5E1] dark:border-[#475569] font-mono text-[0.88em] print:bg-[#F1F5F9] print:text-[#0F172A] print:border-[#CBD5E1]"
                 style={{
                   backgroundColor: isPrint ? '#F1F5F9' : undefined,
@@ -312,21 +328,31 @@ export const InlineText: React.FC<InlineTextProps> = ({
                 }}
                 data-mark="code"
               >
-                {applySearchHighlight(inner, highlightQuery, `hc${lineIdx}-${i}`)}
+                {applySearchHighlight(inner, highlightQuery, elKey)}
               </code>
             ),
           });
         } else if (token.startsWith('<u>')) {
+          const elKey = `hu${lineIdx}-${tokenIdx}`;
           const inner = token.replace(/^<u>|<\/u>$/gi, '');
           out.push({
-            key: `hu${lineIdx}-${i++}`,
-            node: <u className="underline underline-offset-2">{applySearchHighlight(inner, highlightQuery, `hu${lineIdx}-${i}`)}</u>,
+            key: elKey,
+            node: (
+              <u key={elKey} className="underline underline-offset-2">
+                {applySearchHighlight(inner, highlightQuery, elKey)}
+              </u>
+            ),
           });
         } else if (token.startsWith('<del>') || token.startsWith('<s>')) {
+          const elKey = `hd${lineIdx}-${tokenIdx}`;
           const inner = token.replace(/^<(del|s)>|<\/(del|s)>$/gi, '');
           out.push({
-            key: `hd${lineIdx}-${i++}`,
-            node: <del className="line-through text-[#8F9285] print:text-[#64748B]">{applySearchHighlight(inner, highlightQuery, `hd${lineIdx}-${i}`)}</del>,
+            key: elKey,
+            node: (
+              <del key={elKey} className="line-through text-[#8F9285] print:text-[#64748B]">
+                {applySearchHighlight(inner, highlightQuery, elKey)}
+              </del>
+            ),
           });
         }
 

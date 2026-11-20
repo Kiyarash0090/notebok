@@ -249,9 +249,22 @@ export const NoteEditorModal: React.FC<NoteEditorModalProps> = ({
     }
   };
 
-  const handleInsertRecordedAudio = (base64: string, voiceTitle: string) => {
+  const handleInsertRecordedAudio = (base64: string, voiceTitle: string, duration?: number) => {
+    const newAtt: NoteAttachment = {
+      id: `attach_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: voiceTitle,
+      type: 'audio',
+      mimeType: 'audio/webm',
+      size: Math.round((base64.length * 3) / 4),
+      url: base64,
+      duration: duration || undefined,
+      position: 'bottom',
+      createdAt: new Date().toISOString(),
+    };
+    setAttachments((prev) => [...prev, newAtt]);
+
     if (visualEditorRef.current) {
-      visualEditorRef.current.insertAudioBlock(base64, voiceTitle);
+      visualEditorRef.current.insertAudioBlock(base64, voiceTitle, duration);
       return;
     }
     const markdown = `\n\n🎙️[${voiceTitle}](${base64})\n\n`;

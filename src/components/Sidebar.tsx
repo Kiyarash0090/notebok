@@ -20,6 +20,8 @@ import {
   Send,
   FolderOpen,
   Presentation,
+  HardDrive,
+  Lock,
 } from 'lucide-react';
 import { Category, ViewFilter } from '../types';
 import {
@@ -38,6 +40,8 @@ interface SidebarProps {
   categories: Category[];
   onOpenCategoryManager: (initialParentId?: string | null) => void;
   onOpenBackup: () => void;
+  onOpenFileManager?: () => void;
+  isTelegramReady?: boolean;
   onOpenTelegramStorage?: () => void;
   onOpenSlideshow?: (categoryId?: string | null) => void;
   counts: {
@@ -76,6 +80,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   categories,
   onOpenCategoryManager,
   onOpenBackup,
+  onOpenFileManager,
+  isTelegramReady = false,
   onOpenTelegramStorage,
   onOpenSlideshow,
   counts,
@@ -408,6 +414,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="text-[10px] bg-[#0088cc]/15 text-[#0088cc] px-1.5 py-0.5 rounded-md font-bold">
                   MTProto
                 </span>
+              </button>
+            )}
+
+            {onOpenFileManager && (
+              <button
+                id="sidebar-file-manager-action"
+                onClick={() => {
+                  onOpenFileManager();
+                  onClose();
+                }}
+                className="w-full flex items-center justify-between px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-medium text-[#4A6D22] dark:text-[#D0E8B2] hover:bg-[#EAECE2] dark:hover:bg-[#23261F] transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <HardDrive className="w-4 h-4 shrink-0 text-[#4A6D22] dark:text-[#D0E8B2]" />
+                  <span>مدیریت فایل‌ها</span>
+                </div>
+                {isTelegramReady ? (
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                ) : (
+                  <Lock className="w-3.5 h-3.5 text-[#A64D3B] dark:text-[#FFAB91]" />
+                )}
               </button>
             )}
 

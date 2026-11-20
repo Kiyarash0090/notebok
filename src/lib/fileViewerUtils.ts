@@ -9,9 +9,12 @@ import {
   FileJson,
   FilePlus,
   File,
+  Mic,
 } from 'lucide-react';
 
-export type FileCategory = 'office' | 'pdf' | 'txt' | 'code' | 'md' | 'other';
+export type FileCategory = 'office' | 'pdf' | 'txt' | 'code' | 'md' | 'audio' | 'other';
+
+export const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'webm', 'flac', 'opus', 'wma', 'amr'];
 
 export const OFFICE_EXTENSIONS = [
   'doc',
@@ -85,6 +88,7 @@ export function getFileExtension(filename: string): string {
 
 export function getFileCategory(filename: string): FileCategory {
   const ext = getFileExtension(filename);
+  if (AUDIO_EXTENSIONS.includes(ext) || filename.startsWith('data:audio')) return 'audio';
   if (OFFICE_EXTENSIONS.includes(ext)) return 'office';
   if (PDF_EXTENSIONS.includes(ext)) return 'pdf';
   if (MD_EXTENSIONS.includes(ext)) return 'md';
@@ -99,7 +103,7 @@ export function isOfficeFile(filename: string): boolean {
 
 export function isViewableDocument(filename: string): boolean {
   const cat = getFileCategory(filename);
-  return cat === 'pdf' || cat === 'txt' || cat === 'code' || cat === 'md';
+  return cat === 'pdf' || cat === 'txt' || cat === 'code' || cat === 'md' || cat === 'audio';
 }
 
 export function isEditableDocument(filename: string): boolean {
@@ -288,6 +292,14 @@ export function getDocumentBadgeInfo(filename: string) {
       label: 'فایل متنی (TXT)',
       icon: FileText,
       color: 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700',
+    };
+  }
+
+  if (cat === 'audio') {
+    return {
+      label: `صوت ضبط‌شده (${ext.toUpperCase() || 'AUDIO'})`,
+      icon: Mic,
+      color: 'text-[#4A6D22] dark:text-[#D0E8B2] bg-[#EDF5E0] dark:bg-[#232F1A] border-[#D0E8B2] dark:border-[#3D522C]',
     };
   }
 

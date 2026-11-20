@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronUp,
   Circle,
-  Eye,
   FileClock,
   Filter,
   Flame,
@@ -17,7 +16,6 @@ import {
   MoreHorizontal,
   Music,
   Palette,
-  PencilLine,
   Pin,
   Plus,
   Printer,
@@ -28,25 +26,49 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { Category, ImportanceLevel, Note, NoteAttachment, NoteBlock, NoteRevision, ShapeKind, ShapeConfig } from '../../types';
+import { Category, ImportanceLevel, Note, NoteAttachment, NoteBlock, NoteRevision } from '../../types';
 import {
   blocksToPlainText,
   countBlockWords,
   createBlock,
-  createShapeConfig,
   ensureEditableBlocks,
-  getBlockShapes,
   pruneEmptyBlocks,
 } from '../../lib/blocks';
 import { BatchUploadProgress, pickMediaFiles, uploadMediaFiles } from '../../lib/media';
 import { UploadProgressBar } from '../UploadProgressBar';
 import { applyMark } from '../../lib/marks';
-import { BlockRenderer, blockMatchesQuery } from '../blocks/BlockRenderer';
+import { getActiveMarksAtSelection, HighlightColorId } from '../../lib/richText';
+import { blockMatchesQuery } from '../blocks/BlockRenderer';
 import { BlockEditor } from './BlockEditor';
 import { EditorToolbar } from './EditorToolbar';
+import { FloatingSelectionToolbar } from './FloatingSelectionToolbar';
 import { api } from '../../services/api';
 import { getFlattenedCategoryTree, getCategoryPathString } from '../../lib/categoryUtils';
 import { useBackButton } from '../../lib/useBackButton';
+
+type EditorSnapshot = {
+  title: string;
+  blocks: NoteBlock[];
+  summary: string;
+};
+
+const MAX_HISTORY = 80;
+
+function cloneSnapshot(snap: EditorSnapshot): EditorSnapshot {
+  try {
+    return structuredClone(snap);
+  } catch {
+    return JSON.parse(JSON.stringify(snap));
+  }
+}
+
+function snapshotsEqual(a: EditorSnapshot, b: EditorSnapshot): boolean {
+  return (
+    a.title === b.title &&
+    a.summary === b.summary &&
+    JSON.stringify(a.blocks) === JSON.stringify(b.blocks)
+  );
+}
 
 type ViewMode = 'edit' | 'preview';
 
@@ -55,7 +77,6 @@ interface NoteEditorProps {
   isOpen: boolean;
   categories: Category[];
   defaultCategoryId?: string;
-  // Opening a card jumps straight to reading; editing is a separate action.
   initialMode?: ViewMode;
   onClose: () => void;
   onSaved: (note: Note, isNew: boolean, reason?: string) => Promise<void> | void;
@@ -123,8 +144,84 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [summary, setSummary] = useState('');
   const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
 
-  const [mode, setMode] = useState<ViewMode>('edit');
-  const [isPreviewSearchOpen, setIsPreviewSearchOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const [filterMatchesOnly, setFilterMatchesOnly] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  const [activeMarks, setActiveMarks] = useState<Set<string>>(() => new Set());
+  const [activeHighlightColor, setActiveHighlightColor] = useState<HighlightColorId | null>(null);
+  const [highlightColor, setHighlightColor] = useState<HighlightColorId>(() => {
+    try {
+      const saved = localStorage.getItem('notes-highlightColor');
+      if (saved === 'yellow' || saved === 'green' || saved === 'blue' || saved === 'pink') {
+        return saved;
+      }
+    } catch {
+      /* ignore */
+    }
+    return 'yellow';
+  });
+
+  // Cross-block Undo / Redo history
+  const pastRef = useRef<EditorSnapshot[]>([]);
+  const futureRef = useRef<EditorSnapshot[]>([]);
+  const committedRef = useRef<EditorSnapshot>({ title: '', blocks: [], summary: '' });
+  const latestSnapRef = useRef<EditorSnapshot>({ title: '', blocks: [], summary: '' });
+  const burstTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const burstActiveRef = useRef(false);
+  const isApplyingHistoryRef = useRef(false);
+  const isInitializedRef = useRef(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  const syncHistoryFlags = useCallback(() => {
+    setCanUndo(pastRef.current.length > 0);
+    setCanRedo(futureRef.current.length > 0);
+  }, []);
+
+  const resetHistory = useCallback(
+    (snap: EditorSnapshot) => {
+      if (burstTimerRef.current) {
+        clearTimeout(burstTimerRef.current);
+        burstTimerRef.current = null;
+      }
+      burstActiveRef.current = false;
+      isApplyingHistoryRef.current = false;
+      pastRef.current = [];
+      futureRef.current = [];
+      const cloned = cloneSnapshot(snap);
+      committedRef.current = cloned;
+      latestSnapRef.current = cloned;
+      isInitializedRef.current = true;
+      syncHistoryFlags();
+    },
+    [syncHistoryFlags]
+  );
+
+  const flushTypingBurst = useCallback(() => {
+    if (burstTimerRef.current) {
+      clearTimeout(burstTimerRef.current);
+      burstTimerRef.current = null;
+    }
+    if (burstActiveRef.current) {
+      burstActiveRef.current = false;
+      committedRef.current = cloneSnapshot(latestSnapRef.current);
+    }
+  }, []);
+
+  const pushHistorySnapshot = useCallback(
+    (snap: EditorSnapshot) => {
+      pastRef.current.push(cloneSnapshot(snap));
+      if (pastRef.current.length > MAX_HISTORY) {
+        pastRef.current.shift();
+      }
+      futureRef.current = [];
+      syncHistoryFlags();
+    },
+    [syncHistoryFlags]
+  );
   // On narrow screens the panel is a slide-over, so it must not cover the editor on open
   const [activePanel, setActivePanel] = useState<'settings' | 'history' | 'attachments' | null>(null);
   const [saving, setSaving] = useState(false);
@@ -154,6 +251,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   useBackButton(!!activePanel, () => setActivePanel(null), 'editor-active-panel');
   useBackButton(importOpen, () => setImportOpen(false), 'editor-import-open');
   useBackButton(menuOpen, () => setMenuOpen(false), 'editor-menu-open');
+  useBackButton(!!zoomedImage, () => setZoomedImage(null), 'editor-zoom-image');
+  useBackButton(
+    isSearchOpen,
+    () => {
+      setIsSearchOpen(false);
+      setSearchQuery('');
+    },
+    'editor-search-bar'
+  );
   // Only one block's control rail is visible at a time (owned by the editor).
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   // Last block that was clicked/focused; kept even after blur so the "insert
@@ -232,31 +338,50 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftKey = noteId ?? 'new-note';
 
-  const initFromNote = useCallback((n: Note) => {
-    setNoteId(n.id);
-    setTitle(n.title || '');
-    setBlocks(ensureEditableBlocks(n));
-    setCategoryId(n.categoryId || '');
-    setColor(n.color || 'default');
-    setImportance(n.importanceLevel || 'normal');
-    setIsPinned(n.isPinned);
-    setIsImportant(n.isImportant);
-    setTags(n.tags || []);
-    setSummary(n.summary || '');
-    setAttachments(n.attachments || []);
-    setSavedAt(n.updatedAt || null);
-    setError(null);
-  }, []);
+  const initFromNote = useCallback(
+    (n: Note) => {
+      const initialBlocks = ensureEditableBlocks(n);
+      const initialTitle = n.title || '';
+      const initialSummary = n.summary || '';
+      setNoteId(n.id);
+      setTitle(initialTitle);
+      setBlocks(initialBlocks);
+      setCategoryId(n.categoryId || '');
+      setColor(n.color || 'default');
+      setImportance(n.importanceLevel || 'normal');
+      setIsPinned(n.isPinned);
+      setIsImportant(n.isImportant);
+      setTags(n.tags || []);
+      setSummary(initialSummary);
+      setAttachments(n.attachments || []);
+      setSavedAt(n.updatedAt || null);
+      setError(null);
+      resetHistory({
+        title: initialTitle,
+        blocks: initialBlocks,
+        summary: initialSummary,
+      });
+    },
+    [resetHistory]
+  );
 
   // Load the note being edited, or reset to a blank composer
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      isInitializedRef.current = false;
+      if (burstTimerRef.current) {
+        clearTimeout(burstTimerRef.current);
+        burstTimerRef.current = null;
+      }
+      return;
+    }
     if (note) {
       initFromNote(note);
     } else {
+      const initialBlocks = [createBlock('paragraph')];
       setNoteId(null);
       setTitle('');
-      setBlocks([createBlock('paragraph')]);
+      setBlocks(initialBlocks);
       setCategoryId(defaultCategoryId || '');
       setColor('default');
       setImportance('normal');
@@ -267,13 +392,122 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       setAttachments([]);
       setSavedAt(null);
       setError(null);
+      resetHistory({
+        title: '',
+        blocks: initialBlocks,
+        summary: '',
+      });
     }
-    // A brand-new note must open for writing; an existing note opens in the
-    // requested mode (cards default to reading, edit is an explicit action).
-    setMode(note ? initialMode : 'edit');
+    setIsSearchOpen(false);
+    setSearchQuery('');
+    setFilterMatchesOnly(false);
+    setZoomedImage(null);
     // Desktop has room for the settings column; narrow screens open it on demand
-    setActivePanel(window.innerWidth >= 1024 ? (initialMode === 'preview' ? null : 'settings') : null);
-  }, [isOpen, note, defaultCategoryId, initFromNote]);
+    setActivePanel(window.innerWidth >= 1024 ? (note && initialMode === 'preview' ? null : 'settings') : null);
+  }, [isOpen, note, defaultCategoryId, initFromNote, initialMode, resetHistory]);
+
+  // Record cross-block history snapshots on edits (coalescing rapid typing bursts)
+  useEffect(() => {
+    if (!isOpen || !isInitializedRef.current) return;
+    const current: EditorSnapshot = { title, blocks, summary };
+    latestSnapRef.current = current;
+
+    if (isApplyingHistoryRef.current) {
+      isApplyingHistoryRef.current = false;
+      committedRef.current = cloneSnapshot(current);
+      return;
+    }
+
+    if (snapshotsEqual(current, committedRef.current)) return;
+
+    const isStructuralChange =
+      current.blocks.length !== committedRef.current.blocks.length ||
+      current.blocks.some((b, i) => {
+        const prevB = committedRef.current.blocks[i];
+        return !prevB || b.id !== prevB.id || b.type !== prevB.type;
+      });
+
+    if (isStructuralChange) {
+      if (burstTimerRef.current) {
+        clearTimeout(burstTimerRef.current);
+        burstTimerRef.current = null;
+      }
+      burstActiveRef.current = false;
+      pushHistorySnapshot(committedRef.current);
+      committedRef.current = cloneSnapshot(current);
+      return;
+    }
+
+    if (!burstActiveRef.current) {
+      burstActiveRef.current = true;
+      pushHistorySnapshot(committedRef.current);
+    }
+
+    if (burstTimerRef.current) clearTimeout(burstTimerRef.current);
+    burstTimerRef.current = setTimeout(() => {
+      burstActiveRef.current = false;
+      burstTimerRef.current = null;
+      committedRef.current = cloneSnapshot(latestSnapRef.current);
+    }, 550);
+  }, [title, blocks, summary, isOpen, pushHistorySnapshot]);
+
+  // Track active inline marks at caret/selection so toolbar buttons reflect state
+  useEffect(() => {
+    if (!isOpen) return;
+    const syncMarks = () => {
+      const el = document.activeElement;
+      const richRoot = el instanceof HTMLElement ? (el.closest('[data-rich-editor="true"]') as HTMLElement | null) : null;
+      if (richRoot) {
+        const { marks, highlightColor: hlColor } = getActiveMarksAtSelection(richRoot);
+        setActiveMarks(marks);
+        setActiveHighlightColor(hlColor);
+      } else {
+        setActiveMarks(new Set());
+        setActiveHighlightColor(null);
+      }
+    };
+    document.addEventListener('selectionchange', syncMarks);
+    return () => document.removeEventListener('selectionchange', syncMarks);
+  }, [isOpen]);
+
+  // Search matching inside the unified rendered editor
+  useEffect(() => {
+    if (isSearchOpen) {
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+    } else {
+      setSearchQuery('');
+      setFilterMatchesOnly(false);
+    }
+  }, [isSearchOpen]);
+
+  const matchingBlocks = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    return blocks.filter((b) => blockMatchesQuery(b, searchQuery));
+  }, [blocks, searchQuery]);
+
+  const totalMatches = matchingBlocks.length;
+  const activeMatchBlockId = matchingBlocks[activeMatchIndex]?.id;
+
+  useEffect(() => {
+    setActiveMatchIndex(0);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!activeMatchBlockId) return;
+    const el = document.getElementById(`editor-block-${activeMatchBlockId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [activeMatchBlockId]);
+
+  const displayedBlocks = useMemo(() => {
+    if (filterMatchesOnly && searchQuery.trim()) {
+      return matchingBlocks;
+    }
+    return blocks;
+  }, [blocks, matchingBlocks, filterMatchesOnly, searchQuery]);
 
   // Build the payload from current blocks, dropping the empty placeholders
   const payload = useMemo<Partial<Note>>(() => {
@@ -301,8 +535,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       (b) =>
         b.text.trim() !== '' ||
         b.attachmentId ||
-        (Array.isArray(b.shapes) && b.shapes.length > 0) ||
-        Boolean(b.shape) ||
         (b.items && b.items.length > 0) ||
         (b.table?.cells && b.table.cells.some((c) => c.text.trim() !== '')) ||
         (b.gallery?.items && b.gallery.items.length > 0)
@@ -392,11 +624,73 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   // Toolbar/shortcut emphasis: rewrites the focused block's text around the selection
   const runMark = useCallback(
     (mark: string) => {
+      flushTypingBurst();
       const result = applyMark(mark);
       if (result?.id) updateBlock(result.id, { text: result.text });
     },
-    [updateBlock]
+    [updateBlock, flushTypingBurst]
   );
+
+  const handleSelectHighlightColor = useCallback(
+    (cid: HighlightColorId) => {
+      setHighlightColor(cid);
+      try {
+        localStorage.setItem('notes-highlightColor', cid);
+      } catch {
+        /* ignore */
+      }
+      const el = document.activeElement;
+      if (
+        el instanceof HTMLTextAreaElement ||
+        (el instanceof HTMLElement && el.closest('[data-rich-editor="true"]'))
+      ) {
+        runMark(`highlight:${cid}`);
+      }
+    },
+    [runMark]
+  );
+
+  const handleUndo = useCallback(() => {
+    if (burstTimerRef.current) {
+      clearTimeout(burstTimerRef.current);
+      burstTimerRef.current = null;
+    }
+    burstActiveRef.current = false;
+    if (pastRef.current.length === 0) return;
+
+    const prevSnap = pastRef.current.pop()!;
+    futureRef.current.push(cloneSnapshot(latestSnapRef.current));
+    const restored = cloneSnapshot(prevSnap);
+    isApplyingHistoryRef.current = true;
+    committedRef.current = cloneSnapshot(restored);
+    latestSnapRef.current = restored;
+    setTitle(restored.title);
+    setBlocks(restored.blocks);
+    setSummary(restored.summary);
+    setActiveBlockId((cur) => (cur && restored.blocks.some((b) => b.id === cur) ? cur : null));
+    syncHistoryFlags();
+  }, [syncHistoryFlags]);
+
+  const handleRedo = useCallback(() => {
+    if (burstTimerRef.current) {
+      clearTimeout(burstTimerRef.current);
+      burstTimerRef.current = null;
+    }
+    burstActiveRef.current = false;
+    if (futureRef.current.length === 0) return;
+
+    const nextSnap = futureRef.current.pop()!;
+    pastRef.current.push(cloneSnapshot(latestSnapRef.current));
+    const restored = cloneSnapshot(nextSnap);
+    isApplyingHistoryRef.current = true;
+    committedRef.current = cloneSnapshot(restored);
+    latestSnapRef.current = restored;
+    setTitle(restored.title);
+    setBlocks(restored.blocks);
+    setSummary(restored.summary);
+    setActiveBlockId((cur) => (cur && restored.blocks.some((b) => b.id === cur) ? cur : null));
+    syncHistoryFlags();
+  }, [syncHistoryFlags]);
 
   const handleExportPdf = useCallback(() => {
     if (!onDownloadPdf) return;
@@ -414,19 +708,44 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === 's') {
+      const key = e.key.toLowerCase();
+      const code = e.code;
+
+      if (mod && (key === 's' || code === 'KeyS')) {
         e.preventDefault();
         handleSave();
-      } else if (mod && e.key.toLowerCase() === 'p') {
+      } else if (mod && (key === 'p' || code === 'KeyP')) {
         e.preventDefault();
         handleExportPdf();
-      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'x') {
+      } else if (mod && (key === 'z' || code === 'KeyZ')) {
+        const activeEl = document.activeElement as HTMLElement | null;
+        const inAuxiliaryInput =
+          activeEl === searchInputRef.current ||
+          Boolean(activeEl?.closest('aside, [data-native-undo="true"]'));
+        if (!inAuxiliaryInput) {
+          e.preventDefault();
+          if (e.shiftKey) {
+            handleRedo();
+          } else {
+            handleUndo();
+          }
+        }
+      } else if (mod && !e.shiftKey && (key === 'y' || code === 'KeyY')) {
+        const activeEl = document.activeElement as HTMLElement | null;
+        const inAuxiliaryInput =
+          activeEl === searchInputRef.current ||
+          Boolean(activeEl?.closest('aside, [data-native-undo="true"]'));
+        if (!inAuxiliaryInput) {
+          e.preventDefault();
+          handleRedo();
+        }
+      } else if (mod && e.shiftKey && (key === 'x' || code === 'KeyX')) {
         e.preventDefault();
         runMark('strike');
-      } else if (mod && e.key.toLowerCase() === 'b') {
+      } else if (mod && (key === 'b' || code === 'KeyB')) {
         e.preventDefault();
         runMark('bold');
-      } else if (mod && e.key.toLowerCase() === 'i') {
+      } else if (mod && (key === 'i' || code === 'KeyI')) {
         e.preventDefault();
         runMark('italic');
       } else if (e.key === 'Escape') {
@@ -435,7 +754,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, handleSave, handleExportPdf, onClose, runMark]);
+  }, [isOpen, handleSave, handleExportPdf, onClose, runMark, handleUndo, handleRedo]);
 
   const deleteBlock = useCallback(
     (bid: string) => {
@@ -476,6 +795,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     lastActiveBlockIdRef.current = newBlock.id;
   }, []);
 
+  const focusRichBlock = useCallback((blockId: string) => {
+    requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(
+        `[data-block-id="${blockId}"] [data-rich-editor="true"], [data-block-id="${blockId}"] textarea`
+      );
+      target?.focus();
+    });
+  }, []);
+
   const insertBlock = useCallback(
     (type: NoteBlock['type'], overrides?: Partial<NoteBlock>, opts?: { atEnd?: boolean }) => {
       const newBlock = createBlock(type, overrides);
@@ -486,58 +814,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       } else {
         insertAfterActive(newBlock);
       }
+      focusRichBlock(newBlock.id);
     },
-    [insertAfterActive]
-  );
-
-  const handleInsertShape = useCallback(
-    (kind: ShapeKind, overrides?: Partial<ShapeConfig>) => {
-      const newShape = createShapeConfig(kind, overrides);
-      setBlocks((prev) => {
-        if (prev.length === 0) {
-          const blk = createBlock('paragraph', { shapes: [newShape] });
-          setActiveBlockId(blk.id);
-          lastActiveBlockIdRef.current = blk.id;
-          return [blk];
-        }
-
-        const targetId = lastActiveBlockIdRef.current || lastFocusedBlockIdRef.current || prev[prev.length - 1].id;
-        const targetIndex = prev.findIndex((b) => b.id === targetId);
-
-        if (targetIndex === -1) {
-          const lastBlock = prev[prev.length - 1];
-          const existingShapes = getBlockShapes(lastBlock);
-          const updated = {
-            ...lastBlock,
-            shapes: [...existingShapes, newShape],
-            shape: undefined,
-          };
-          const next = [...prev];
-          next[next.length - 1] = updated;
-          return next;
-        }
-
-        const targetBlock = prev[targetIndex];
-        const existingShapes = getBlockShapes(targetBlock);
-        const updatedBlock = {
-          ...targetBlock,
-          shapes: [...existingShapes, newShape],
-          shape: undefined,
-        };
-
-        const next = [...prev];
-        next[targetIndex] = updatedBlock;
-        return next;
-      });
-
-      // Automatically select this newly inserted shape and deselect any other shapes
-      setTimeout(() => {
-        if (newShape.id) {
-          window.dispatchEvent(new CustomEvent('active-shape-change', { detail: { shapeId: newShape.id } }));
-        }
-      }, 50);
-    },
-    []
+    [insertAfterActive, focusRichBlock]
   );
 
   // Insert a whole list of blocks right below the last active block.
@@ -568,31 +847,43 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     setImportOpen(false);
   }, [importText, insertBlocksAfterActive]);
 
-  const runCommand = useCallback((bid: string, command: string) => {
-    if (command === 'insert_after') {
-      setBlocks((prev) => {
-        const idx = prev.findIndex((b) => b.id === bid);
-        if (idx === -1) return prev;
-        const next = [...prev];
-        next.splice(idx + 1, 0, createBlock('paragraph'));
-        return next;
-      });
-      return;
-    }
+  const runCommand = useCallback(
+    (bid: string, command: string) => {
+      if (command === 'insert_after') {
+        const created = createBlock('paragraph');
+        setBlocks((prev) => {
+          const idx = prev.findIndex((b) => b.id === bid);
+          if (idx === -1) return prev;
+          const next = [...prev];
+          next.splice(idx + 1, 0, created);
+          return next;
+        });
+        setActiveBlockId(created.id);
+        lastActiveBlockIdRef.current = created.id;
+        focusRichBlock(created.id);
+        return;
+      }
 
-    if (command === 'merge_up') {
-      setBlocks((prev) => {
-        const idx = prev.findIndex((b) => b.id === bid);
-        // Never delete the only block, and never merge into a non-text block
-        if (idx <= 0) return prev;
-        const above = prev[idx - 1];
-        if (above.type === 'media' || above.type === 'divider' || above.type === 'checklist') return prev;
-        const next = [...prev];
-        next.splice(idx, 1);
-        return next;
-      });
-    }
-  }, []);
+      if (command === 'merge_up') {
+        let prevFocusId: string | null = null;
+        setBlocks((prev) => {
+          const idx = prev.findIndex((b) => b.id === bid);
+          // Never delete the only block, and never merge into a non-text block
+          if (idx <= 0) return prev;
+          const above = prev[idx - 1];
+          if (above.type === 'media' || above.type === 'divider' || above.type === 'checklist') return prev;
+          prevFocusId = above.id;
+          const next = [...prev];
+          next.splice(idx, 1);
+          return next;
+        });
+        if (prevFocusId) {
+          focusRichBlock(prevFocusId);
+        }
+      }
+    },
+    [focusRichBlock]
+  );
 
   // Unified toolbar action: pick files and add them as a single media block
   // (one file) or a paginated gallery block (several files).
@@ -1035,134 +1326,283 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         </button>
       </header>
 
-      {/* Toolbar: view toggle + block insert */}
-      <div className="shrink-0 px-3 sm:px-4 relative z-40">
-        <div className="flex items-center gap-2 pt-2">
-          <div className="flex items-center gap-0.5 bg-[#EDEEEB] dark:bg-[#1C1C17] rounded-2xl p-1">
-            <button
-              type="button"
-              onClick={() => setMode('edit')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-colors ${
-                mode === 'edit' ? 'bg-[#D0E8B2] text-[#1A3700]' : 'text-[#5E6258] dark:text-[#8F9285]'
-              }`}
-            >
-              <PencilLine className="w-3.5 h-3.5" />
-              ویرایش
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('preview')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-colors ${
-                mode === 'preview' ? 'bg-[#D0E8B2] text-[#1A3700]' : 'text-[#5E6258] dark:text-[#8F9285]'
-              }`}
-            >
-              <Eye className="w-3.5 h-3.5" />
-              پیش‌نمایش
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (mode !== 'preview') {
-                  setMode('preview');
-                  setIsPreviewSearchOpen(true);
-                } else {
-                  setIsPreviewSearchOpen((prev) => !prev);
-                }
-              }}
-              className={`p-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
-                mode === 'preview' && isPreviewSearchOpen
-                  ? 'bg-[#4A6D22] text-white shadow-xs'
-                  : 'text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10'
-              }`}
-              title="جستجو در متن جزوه"
-            >
-              <Search className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1 mr-auto">
-            <span className="text-[10px] text-[#8F9285]">{wordCount} کلمه</span>
-          </div>
-
-          {onDownloadPdf && (
-            <button
-              type="button"
-              onClick={handleExportPdf}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#EDEEEB] dark:bg-[#1C1C17] hover:bg-black/5 dark:hover:bg-white/10 text-[#4A6D22] dark:text-[#D0E8B2] text-[11px] font-bold transition-colors"
-              title="خروجی PDF و چاپ (Ctrl+P)"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">خروجی PDF</span>
-            </button>
-          )}
-
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((v) => !v)}
-              className="w-9 h-9 rounded-2xl hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center text-[#5E6258] dark:text-[#8F9285]"
-              title="بیشتر"
-            >
-              <MoreHorizontal className="w-5 h-5" />
-            </button>
-            {menuOpen && (
-              <>
-                {/* Above the sticky EditorToolbar (z-20) and the settings panel (z-40)
-                    so the menu never slides behind either. */}
-                <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                <div className="absolute left-0 top-10 z-50 w-52 bg-white dark:bg-[#1C1C17] rounded-2xl border border-[#E1E4D5] dark:border-[#43493E] shadow-2xl p-1.5">
-                  {onDownloadPdf && (
-                    <button
-                      onClick={() => {
-                        handleExportPdf();
-                        setMenuOpen(false);
-                      }}
-                      className="w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center gap-2 text-[#4A6D22] dark:text-[#D0E8B2]"
-                    >
-                      <Printer className="w-4 h-4" /> خروجی PDF و چاپ
-                    </button>
-                  )}
-                  <button onClick={() => { setActivePanel('settings'); setMenuOpen(false); }} className="w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center gap-2">
-                    <Palette className="w-4 h-4 text-[#4A6D22]" /> تنظیمات
-                  </button>
-                  <button onClick={() => { setActivePanel('attachments'); setMenuOpen(false); }} className="w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center gap-2">
-                    <ImageIcon className="w-4 h-4 text-[#8B6814]" /> پیوست‌ها
-                  </button>
-                  <button onClick={() => { setActivePanel('history'); setMenuOpen(false); }} className="w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center gap-2">
-                    <History className="w-4 h-4 text-[#36667F]" /> تاریخچه نسخه
-                  </button>
-                  {!isTrashView && noteId && (
-                    <button onClick={() => { onDelete?.(noteId); onClose(); setMenuOpen(false); }} className="w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold text-[#A64D3B] flex items-center gap-2">
-                      <Trash2 className="w-4 h-4" /> حذف
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {mode === 'edit' && (
-          <EditorToolbar
-            onCommand={runMark}
-            onInsertBlock={insertBlock}
-            onInsertShape={handleInsertShape}
-            onAddMedia={handleAddMedia}
-            onRecord={startRecording}
-            onImportText={() => setImportOpen(true)}
-          />
-        )}
-      </div>
-
       {/* Body */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Main editing / preview column */}
-        <div className="flex-1 overflow-y-auto overscroll-contain px-3 sm:px-6 py-4" ref={containerRef}>
-          <div className="max-w-3xl mx-auto">
-            {mode === 'edit' ? (
-              <div ref={blocksContainerRef} className="space-y-1.5 pb-24" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
-                {blocks.map((block, idx) => (
-                  <div key={block.id} data-block-id={block.id} onDragEnter={() => setDraggedIndex(idx)}>
+        {/* Main editor column: toolbar + unified canvas */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+          {/* Toolbar: search + block insert & WYSIWYG formatting */}
+          <div className="shrink-0 px-3 sm:px-4 relative z-40">
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsSearchOpen((prev) => !prev)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                  isSearchOpen
+                    ? 'bg-[#4A6D22] text-white shadow-xs'
+                    : 'bg-[#EDEEEB] dark:bg-[#1C1C17] text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10'
+                }`}
+                title="جستجو در متن جزوه"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>جستجو</span>
+              </button>
+
+              <div className="flex items-center gap-1 mr-auto">
+                <span className="text-[10px] text-[#8F9285]">{wordCount} کلمه</span>
+              </div>
+
+              {onDownloadPdf && (
+                <button
+                  type="button"
+                  onClick={handleExportPdf}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#EDEEEB] dark:bg-[#1C1C17] hover:bg-black/5 dark:hover:bg-white/10 text-[#4A6D22] dark:text-[#D0E8B2] text-[11px] font-bold transition-colors"
+                  title="خروجی PDF و چاپ (Ctrl+P)"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">خروجی PDF</span>
+                </button>
+              )}
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="w-9 h-9 rounded-2xl hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center text-[#5E6258] dark:text-[#8F9285]"
+                  title="بیشتر"
+                >
+                  <MoreHorizontal className="w-5 h-5" />
+                </button>
+                {menuOpen && (
+                  <>
+                    {/* Above EditorToolbar (z-40) and below the dropdown menu (z-50) */}
+                    <div className="fixed inset-0 z-[45]" onClick={() => setMenuOpen(false)} />
+                    <div className="absolute left-0 top-10 z-50 w-52 bg-white dark:bg-[#1C1C17] rounded-2xl border border-[#E1E4D5] dark:border-[#43493E] shadow-2xl p-1.5">
+                      {onDownloadPdf && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleExportPdf();
+                            setMenuOpen(false);
+                          }}
+                          className="w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center gap-2 text-[#4A6D22] dark:text-[#D0E8B2]"
+                        >
+                          <Printer className="w-4 h-4" /> خروجی PDF و چاپ
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActivePanel((cur) => (cur === 'settings' ? null : 'settings'));
+                          setMenuOpen(false);
+                        }}
+                        className={`w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center justify-between gap-2 ${
+                          activePanel === 'settings' ? 'bg-[#D0E8B2]/35 dark:bg-[#324B10]/40 text-[#4A6D22] dark:text-[#D0E8B2]' : ''
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <Palette className="w-4 h-4 text-[#4A6D22]" /> تنظیمات
+                        </span>
+                        {activePanel === 'settings' && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActivePanel((cur) => (cur === 'attachments' ? null : 'attachments'));
+                          setMenuOpen(false);
+                        }}
+                        className={`w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center justify-between gap-2 ${
+                          activePanel === 'attachments' ? 'bg-[#D0E8B2]/35 dark:bg-[#324B10]/40 text-[#4A6D22] dark:text-[#D0E8B2]' : ''
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <ImageIcon className="w-4 h-4 text-[#8B6814]" /> پیوست‌ها
+                        </span>
+                        {activePanel === 'attachments' && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActivePanel((cur) => (cur === 'history' ? null : 'history'));
+                          setMenuOpen(false);
+                        }}
+                        className={`w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold flex items-center justify-between gap-2 ${
+                          activePanel === 'history' ? 'bg-[#D0E8B2]/35 dark:bg-[#324B10]/40 text-[#4A6D22] dark:text-[#D0E8B2]' : ''
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <History className="w-4 h-4 text-[#36667F]" /> تاریخچه نسخه
+                        </span>
+                        {activePanel === 'history' && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                      {!isTrashView && noteId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDelete?.(noteId);
+                            onClose();
+                            setMenuOpen(false);
+                          }}
+                          className="w-full text-right px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-xs font-bold text-[#A64D3B] flex items-center gap-2"
+                        >
+                          <Trash2 className="w-4 h-4" /> حذف
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <EditorToolbar
+              onCommand={runMark}
+              onInsertBlock={insertBlock}
+              onAddMedia={handleAddMedia}
+              onRecord={startRecording}
+              onImportText={() => setImportOpen(true)}
+              activeMarks={activeMarks}
+              highlightColor={highlightColor}
+              onSelectHighlightColor={handleSelectHighlightColor}
+              activeHighlightColor={activeHighlightColor}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+            />
+          </div>
+
+          {/* Unified Rendered Editing Canvas */}
+          <div className="flex-1 overflow-y-auto overscroll-contain px-3 sm:px-6 py-4" ref={containerRef}>
+            <div className="max-w-3xl mx-auto space-y-3">
+            {/* Expandable Search Bar */}
+            {isSearchOpen && (
+              <div className="sticky top-0 z-30 pt-1 pb-2 bg-[#FAF9F6]/95 dark:bg-[#1C1C17]/95 backdrop-blur-md rounded-2xl border border-[#D0E8B2] dark:border-[#3D522C] p-2 sm:p-2.5 shadow-md transition-all animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex-1 flex items-center gap-2 min-w-[180px] bg-white dark:bg-[#12140E] border border-[#E1E4D5] dark:border-[#43493E] focus-within:border-[#4A6D22] dark:focus-within:border-[#D0E8B2] px-3 py-1.5 rounded-xl transition-all">
+                    <Search className="w-4 h-4 shrink-0 text-[#4A6D22] dark:text-[#D0E8B2]" />
+                    <input
+                      ref={searchInputRef}
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (totalMatches > 0) {
+                            setActiveMatchIndex((prev) =>
+                              e.shiftKey ? (prev - 1 + totalMatches) % totalMatches : (prev + 1) % totalMatches
+                            );
+                          }
+                        } else if (e.key === 'Escape') {
+                          setIsSearchOpen(false);
+                          setSearchQuery('');
+                        }
+                      }}
+                      placeholder="جستجو در متن، فرمول‌ها، چک‌لیست و جدول‌های جزوه..."
+                      className="w-full bg-transparent text-xs sm:text-sm text-[#1A1C16] dark:text-[#E2E3DC] placeholder-[#8F9285] outline-none"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery('');
+                          searchInputRef.current?.focus();
+                        }}
+                        className="p-1 rounded-lg text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                        title="پاک کردن جستجو"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {searchQuery.trim() && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#EDEEEB] dark:bg-[#12140E] text-[#5E6258] dark:text-[#8F9285] flex items-center gap-1">
+                        {totalMatches > 0 ? (
+                          <>
+                            <span className="text-[#4A6D22] dark:text-[#D0E8B2] font-black">{activeMatchIndex + 1}</span>
+                            <span>از</span>
+                            <span className="font-bold">{totalMatches}</span>
+                            <span className="hidden sm:inline">مورد</span>
+                          </>
+                        ) : (
+                          <span className="text-[#A64D3B] dark:text-[#FF8A75]">نتیجه‌ای یافت نشد</span>
+                        )}
+                      </span>
+
+                      {totalMatches > 0 && (
+                        <div className="flex items-center gap-0.5 bg-[#EDEEEB] dark:bg-[#12140E] rounded-xl p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setActiveMatchIndex((prev) => (prev - 1 + totalMatches) % totalMatches)}
+                            className="p-1 rounded-lg text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                            title="مورد قبلی (Shift+Enter)"
+                          >
+                            <ChevronUp className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveMatchIndex((prev) => (prev + 1) % totalMatches)}
+                            className="p-1 rounded-lg text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                            title="مورد بعدی (Enter)"
+                          >
+                            <ChevronDown className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => setFilterMatchesOnly(!filterMatchesOnly)}
+                        className={`flex items-center gap-1 px-2 py-1 rounded-xl text-[11px] font-bold transition-colors ${
+                          filterMatchesOnly
+                            ? 'bg-[#4A6D22] text-white shadow-xs'
+                            : 'bg-[#EDEEEB] dark:bg-[#12140E] text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10'
+                        }`}
+                        title="فقط نمایش بلوک‌های شامل عبارت جستجو"
+                      >
+                        <Filter className="w-3.5 h-3.5" />
+                        <span className="hidden md:inline">فقط نتایج</span>
+                      </button>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setIsSearchOpen(false)}
+                    className="p-1.5 rounded-xl bg-[#EDEEEB] dark:bg-[#12140E] text-[#5E6258] dark:text-[#8F9285] hover:text-[#1A1C16] dark:hover:text-[#E2E3DC] hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
+                    title="بستن کادر جستجو"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {summary?.trim() && (
+              <div className="p-3 rounded-2xl bg-[#EDF5E0] dark:bg-[#232F1A] border border-[#D0E8B2] dark:border-[#3D522C] text-xs text-[#4A6D22] dark:text-[#D0E8B2] leading-relaxed">
+                {summary}
+              </div>
+            )}
+
+            <div ref={blocksContainerRef} className="space-y-1.5 pb-24" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
+              {displayedBlocks.map((block, idx) => {
+                const isMatched = Boolean(searchQuery.trim() && blockMatchesQuery(block, searchQuery));
+                const isActiveMatch = Boolean(searchQuery.trim() && activeMatchBlockId === block.id);
+                return (
+                  <div
+                    key={block.id}
+                    id={`editor-block-${block.id}`}
+                    data-block-id={block.id}
+                    onDragEnter={() => setDraggedIndex(idx)}
+                    className={`transition-all duration-200 rounded-2xl ${
+                      isActiveMatch
+                        ? 'ring-2 ring-[#4A6D22] bg-[#EDF5E0] dark:bg-[#232F1A] p-1.5 shadow-md'
+                        : isMatched
+                        ? 'bg-[#F5F8F0]/70 dark:bg-[#1E2618]/50 p-1'
+                        : ''
+                    }`}
+                  >
                     <BlockEditor
                       block={block}
                       attachments={attachments}
@@ -1171,11 +1611,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                       onDelete={deleteBlock}
                       onMove={moveBlock}
                       onPickMedia={handlePickMedia}
-                      onZoomImage={(url) => window.open(url, '_blank')}
+                      onZoomImage={(url) => setZoomedImage(url)}
                       onAddGalleryItems={handleAddGalleryItems}
                       onReplaceGalleryItem={handleReplaceGalleryItem}
                       onRemoveGalleryItem={handleRemoveGalleryItem}
                       active={activeBlockId === block.id}
+                      searchQuery={searchQuery}
                       onActivateChange={(isActive) => {
                         // Keep the anchor even on blur: by the time the toolbar
                         // button is clicked the active block has blurred, so the
@@ -1186,32 +1627,30 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                       }}
                     />
                   </div>
-                ))}
+                );
+              })}
 
-                {/* Inline add button at the end */}
-                <button
-                  type="button"
-                  onClick={() => insertBlock('paragraph', undefined, { atEnd: true })}
-                  className="w-full py-3 rounded-2xl border-2 border-dashed border-[#E1E4D5] dark:border-[#43493E] text-[#8F9285] hover:text-[#4A6D22] hover:border-[#D0E8B2] dark:hover:text-[#D0E8B2] text-xs font-bold flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  بلوک جدید
-                </button>
-              </div>
-            ) : (
-              <PreviewPane
-                blocks={blocks}
-                attachments={attachments}
-                title={title}
-                summary={summary}
-                isSearchOpen={isPreviewSearchOpen}
-                setIsSearchOpen={setIsPreviewSearchOpen}
-              />
-            )}
+              {/* Inline add button at the end */}
+              <button
+                type="button"
+                onClick={() => insertBlock('paragraph', undefined, { atEnd: true })}
+                className="w-full py-3 rounded-2xl border-2 border-dashed border-[#E1E4D5] dark:border-[#43493E] text-[#8F9285] hover:text-[#4A6D22] hover:border-[#D0E8B2] dark:hover:text-[#D0E8B2] text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                بلوک جدید
+              </button>
+            </div>
+          </div>
+
+          <FloatingSelectionToolbar
+            containerRef={blocksContainerRef}
+            onCommand={runMark}
+            activeMarks={activeMarks}
+            activeHighlightColor={activeHighlightColor}
+          />
           </div>
         </div>
 
-        {/* Right settings / history panel — a slide-over on small screens, a column on desktop */}
         {/* Import-text popover */}
         {importOpen && (
           <div className="fixed inset-0 z-[90] bg-black/40 flex items-center justify-center p-4" onClick={() => setImportOpen(false)}>
@@ -1224,6 +1663,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               </div>
               <textarea
                 autoFocus
+                data-native-undo="true"
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
                 placeholder="متن را اینجا بچسبانید... هر خط یک بلوک جدا می‌شود"
@@ -1242,22 +1682,24 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           </div>
         )}
 
+        {/* Side settings / history panel — a slide-over on small screens, a dedicated column on desktop */}
         {activePanel && (
           <>
             <div
-              className="lg:hidden fixed inset-0 z-30 bg-black/40"
+              className="lg:hidden fixed inset-0 z-[82] bg-black/40"
               onClick={() => setActivePanel(null)}
             />
-            <aside className="fixed lg:static inset-y-0 right-0 z-40 w-80 max-w-[85vw] shrink-0 border-r border-[#E1E4D5] dark:border-[#43493E] overflow-y-auto bg-[#FAF9F5] dark:bg-[#12140E] lg:bg-[#F5F6EE]/40 lg:dark:bg-[#1C1C17]/20">
-              <div className="flex items-center justify-between px-4 pt-3 lg:hidden">
-                <span className="text-[11px] font-bold text-[#5E6258] dark:text-[#8F9285]">
+            <aside className="fixed lg:static inset-y-0 left-0 z-[85] lg:z-auto w-80 max-w-[85vw] shrink-0 border-r border-[#E1E4D5] dark:border-[#43493E] overflow-y-auto bg-[#FAF9F5] dark:bg-[#12140E] lg:bg-[#F5F6EE]/40 lg:dark:bg-[#1C1C17]/20">
+              <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-[#E1E4D5]/70 dark:border-[#43493E]/70 bg-[#FAF9F5]/95 dark:bg-[#12140E]/95 lg:bg-[#F5F6EE]/95 lg:dark:bg-[#1C1C17]/95 backdrop-blur-sm">
+                <span className="text-xs font-bold text-[#1A1C16] dark:text-[#E2E3DC]">
                   {activePanel === 'settings' ? 'تنظیمات' : activePanel === 'attachments' ? 'پیوست‌ها' : 'تاریخچه'}
                 </span>
                 <button
                   type="button"
                   onClick={() => setActivePanel(null)}
-                  className="w-8 h-8 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center text-[#5E6258] dark:text-[#8F9285]"
+                  className="w-8 h-8 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center text-[#5E6258] dark:text-[#8F9285] transition-colors"
                   title="بستن پنل"
+                  aria-label="بستن پنل"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1341,224 +1783,29 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         onCancel={handleCancelUpload}
         onDismiss={() => setUploadProgress(null)}
       />
-    </div>
-  );
-};
 
-/* ---------- Preview ---------- */
-const PreviewPane: React.FC<{
-  blocks: NoteBlock[];
-  attachments: NoteAttachment[];
-  title: string;
-  summary: string;
-  isSearchOpen: boolean;
-  setIsSearchOpen: (open: boolean) => void;
-}> = ({ blocks, attachments, title, summary, isSearchOpen, setIsSearchOpen }) => {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
-  const [filterMatchesOnly, setFilterMatchesOnly] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // Close search bar on mobile back button
-  useBackButton(
-    isSearchOpen,
-    () => {
-      setIsSearchOpen(false);
-      setSearchQuery('');
-    },
-    'preview-search-bar'
-  );
-
-  useEffect(() => {
-    if (isSearchOpen) {
-      setTimeout(() => {
-        searchInputRef.current?.focus();
-      }, 100);
-    } else {
-      setSearchQuery('');
-    }
-  }, [isSearchOpen]);
-
-  const toggleSearch = () => {
-    setIsSearchOpen(!isSearchOpen);
-  };
-
-  const prunedBlocks = useMemo(() => pruneEmptyBlocks(blocks), [blocks]);
-
-  // Find matching blocks
-  const matchingBlocks = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    return prunedBlocks.filter((b) => blockMatchesQuery(b, searchQuery));
-  }, [prunedBlocks, searchQuery]);
-
-  const totalMatches = matchingBlocks.length;
-  const activeMatchBlockId = matchingBlocks[activeMatchIndex]?.id;
-
-  // Reset active index when search query changes
-  useEffect(() => {
-    setActiveMatchIndex(0);
-  }, [searchQuery]);
-
-  // Smooth scroll to active match
-  const scrollToMatch = useCallback((blockId?: string) => {
-    if (!blockId) return;
-    const el = document.getElementById(`preview-block-${blockId}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (activeMatchBlockId) {
-      scrollToMatch(activeMatchBlockId);
-    }
-  }, [activeMatchBlockId, scrollToMatch]);
-
-  const handleNextMatch = () => {
-    if (totalMatches === 0) return;
-    setActiveMatchIndex((prev) => (prev + 1) % totalMatches);
-  };
-
-  const handlePrevMatch = () => {
-    if (totalMatches === 0) return;
-    setActiveMatchIndex((prev) => (prev - 1 + totalMatches) % totalMatches);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (e.shiftKey) {
-        handlePrevMatch();
-      } else {
-        handleNextMatch();
-      }
-    } else if (e.key === 'Escape') {
-      setIsSearchOpen(false);
-      setSearchQuery('');
-    }
-  };
-
-  const displayedBlocks = useMemo(() => {
-    if (filterMatchesOnly && searchQuery.trim()) {
-      return matchingBlocks;
-    }
-    return prunedBlocks;
-  }, [prunedBlocks, matchingBlocks, filterMatchesOnly, searchQuery]);
-
-  return (
-    <div className="space-y-3">
-      {/* Expandable Preview Search Bar */}
-      {isSearchOpen && (
-        <div className="sticky top-0 z-30 pt-1 pb-2 bg-[#FAF9F6]/95 dark:bg-[#1C1C17]/95 backdrop-blur-md rounded-2xl border border-[#D0E8B2] dark:border-[#3D522C] p-2 sm:p-2.5 shadow-md transition-all animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Search Input Box */}
-            <div className="flex-1 flex items-center gap-2 min-w-[180px] bg-white dark:bg-[#12140E] border border-[#E1E4D5] dark:border-[#43493E] focus-within:border-[#4A6D22] dark:focus-within:border-[#D0E8B2] px-3 py-1.5 rounded-xl transition-all">
-              <Search className="w-4 h-4 shrink-0 text-[#4A6D22] dark:text-[#D0E8B2]" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="جستجو در متن، فرمول‌ها، چک‌لیست و جدول‌های جزوه..."
-                className="w-full bg-transparent text-xs sm:text-sm text-[#1A1C16] dark:text-[#E2E3DC] placeholder-[#8F9285] outline-none"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery('');
-                    searchInputRef.current?.focus();
-                  }}
-                  className="p-1 rounded-lg text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-                  title="پاک کردن جستجو"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Match Counter & Nav Controls */}
-            {searchQuery.trim() && (
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#EDEEEB] dark:bg-[#12140E] text-[#5E6258] dark:text-[#8F9285] flex items-center gap-1">
-                  {totalMatches > 0 ? (
-                    <>
-                      <span className="text-[#4A6D22] dark:text-[#D0E8B2] font-black">{activeMatchIndex + 1}</span>
-                      <span>از</span>
-                      <span className="font-bold">{totalMatches}</span>
-                      <span className="hidden sm:inline">مورد</span>
-                    </>
-                  ) : (
-                    <span className="text-[#A64D3B] dark:text-[#FF8A75]">نتیجه‌ای یافت نشد</span>
-                  )}
-                </span>
-
-                {totalMatches > 0 && (
-                  <div className="flex items-center gap-0.5 bg-[#EDEEEB] dark:bg-[#12140E] rounded-xl p-0.5">
-                    <button
-                      type="button"
-                      onClick={handlePrevMatch}
-                      className="p-1 rounded-lg text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-30 transition-colors"
-                      title="مورد قبلی (Shift+Enter)"
-                    >
-                      <ChevronUp className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleNextMatch}
-                      className="p-1 rounded-lg text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-30 transition-colors"
-                      title="مورد بعدی (Enter)"
-                    >
-                      <ChevronDown className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-
-                {/* Filter mode button */}
-                <button
-                  type="button"
-                  onClick={() => setFilterMatchesOnly(!filterMatchesOnly)}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-xl text-[11px] font-bold transition-colors ${
-                    filterMatchesOnly
-                      ? 'bg-[#4A6D22] text-white shadow-xs'
-                      : 'bg-[#EDEEEB] dark:bg-[#12140E] text-[#5E6258] dark:text-[#8F9285] hover:bg-black/5 dark:hover:bg-white/10'
-                  }`}
-                  title="فقط نمایش بلوک‌های شامل عبارت جستجو"
-                >
-                  <Filter className="w-3.5 h-3.5" />
-                  <span className="hidden md:inline">فقط نتایج</span>
-                </button>
-              </div>
-            )}
-
-            {/* Close Toggle Button */}
-            <button
-              type="button"
-              onClick={toggleSearch}
-              className="p-1.5 rounded-xl bg-[#EDEEEB] dark:bg-[#12140E] text-[#5E6258] dark:text-[#8F9285] hover:text-[#1A1C16] dark:hover:text-[#E2E3DC] hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
-              title="بستن کادر جستجو"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+      {/* Image Zoom Lightbox */}
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setZoomedImage(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setZoomedImage(null)}
+            className="absolute top-4 left-4 p-2.5 rounded-2xl bg-white/15 text-white hover:bg-white/30"
+            title="بستن"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <img
+            src={zoomedImage}
+            alt="نمایش کامل تصویر"
+            className="max-w-full max-h-[88vh] object-contain rounded-2xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
-
-      {title?.trim() && <h1 className="text-xl font-extrabold text-[#1A1C16] dark:text-[#E2E3DC]">{title}</h1>}
-      {summary?.trim() && (
-        <div className="p-3 rounded-2xl bg-[#EDF5E0] dark:bg-[#232F1A] border border-[#D0E8B2] dark:border-[#3D522C] text-xs text-[#4A6D22] dark:text-[#D0E8B2] leading-relaxed">
-          {summary}
-        </div>
-      )}
-
-      {/* Render Note Content with Search Highlighting */}
-      <BlockRenderer
-        blocks={displayedBlocks}
-        attachments={attachments}
-        searchQuery={searchQuery}
-        activeMatchBlockId={activeMatchBlockId}
-      />
     </div>
   );
 };

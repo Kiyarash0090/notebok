@@ -261,9 +261,21 @@ export const QuickCreateBar: React.FC<QuickCreateBarProps> = ({
     }
   };
 
-  const handleInsertRecordedAudio = (base64: string, voiceTitle: string) => {
+  const handleInsertRecordedAudio = (base64: string, voiceTitle: string, duration?: number) => {
     const markdown = `\n🎙️[${voiceTitle}](${base64})\n`;
     setContent((prev) => (prev ? prev + '\n' + markdown : markdown));
+    const newAtt: NoteAttachment = {
+      id: `attach_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: voiceTitle,
+      type: 'audio',
+      mimeType: 'audio/webm',
+      size: Math.round((base64.length * 3) / 4),
+      url: base64,
+      duration: duration || undefined,
+      position: 'bottom',
+      createdAt: new Date().toISOString(),
+    };
+    setAttachments((prev) => [...prev, newAtt]);
   };
 
   const handleAddTag = () => {

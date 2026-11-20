@@ -16,6 +16,7 @@ import {
 import { NoteAttachment } from '../types';
 import { MathRenderer } from './MathRenderer';
 import { VideoPlayerModal } from './VideoPlayerModule';
+import { AudioPlayer } from './blocks/AudioPlayer';
 import { useDocumentViewer } from '../context/DocumentViewerContext';
 import { isOfficeFile, isViewableDocument, getDocumentBadgeInfo } from '../lib/fileViewerUtils';
 
@@ -428,44 +429,9 @@ export const RichNoteContent: React.FC<RichNoteContentProps> = ({
 
   // Render inline audio
   const renderInlineAudio = (src: string, alt: string, index: number) => {
-    const audioId = `inline-audio-${index}`;
-    const isPlaying = playingAudioId === audioId;
-
-    const togglePlay = () => {
-      if (isPlaying) {
-        if (audioRefs.current[audioId]) {
-          audioRefs.current[audioId]?.pause();
-        }
-        setPlayingAudioId(null);
-      } else {
-        if (playingAudioId && audioRefs.current[playingAudioId]) {
-          audioRefs.current[playingAudioId]?.pause();
-        }
-        const audio = new Audio(src);
-        audioRefs.current[audioId] = audio;
-        audio.onended = () => setPlayingAudioId(null);
-        audio.play().then(() => setPlayingAudioId(audioId)).catch(console.error);
-      }
-    };
-
     return (
-      <div key={`inline-audio-${index}`} className="my-3 flex items-center gap-3 p-3 rounded-2xl bg-[#EAECE2] dark:bg-[#23261F] border border-[#E1E4D5] dark:border-[#43493E]">
-        <audio ref={(el) => { audioRefs.current[audioId] = el; }} src={src} preload="none" />
-        <button
-          type="button"
-          onClick={togglePlay}
-          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 ${
-            isPlaying
-              ? 'bg-red-600 text-white animate-pulse'
-              : 'bg-[#D0E8B2] text-[#1A3700] hover:bg-[#c2dea0]'
-          }`}
-        >
-          {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 mr-0.5" />}
-        </button>
-        <div className="flex flex-col min-w-0">
-          <span className="text-xs font-bold truncate text-[#1A1C16] dark:text-[#E2E3DC]">🎙️ {alt}</span>
-          <span className="text-[10px] text-[#5E6258] dark:text-[#8F9285]">فایل صوتی</span>
-        </div>
+      <div key={`inline-audio-${index}`} className="my-3">
+        <AudioPlayer src={src} title={alt} />
       </div>
     );
   };

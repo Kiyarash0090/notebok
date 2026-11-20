@@ -1,53 +1,10 @@
 import { CheckCircle2, Info, Lightbulb, LucideIcon, OctagonX, TriangleAlert } from 'lucide-react';
-import { CalloutTone, ChecklistItem, Note, NoteAttachment, NoteBlock, ShapeConfig, ShapeKind, TableCell, TableData } from '../types';
+import { CalloutTone, ChecklistItem, Note, NoteAttachment, NoteBlock, TableCell, TableData } from '../types';
 
 let counter = 0;
 export const uid = (prefix: string) => {
   counter += 1;
   return `${prefix}_${Date.now().toString(36)}${counter.toString(36)}`;
-};
-
-export const createShapeConfig = (kind: ShapeKind = 'rect', overrides: Partial<ShapeConfig> = {}): ShapeConfig => {
-  const isTextbox = kind === 'textbox';
-  return {
-    id: uid('shp'),
-    kind,
-    color: isTextbox ? '#FAF9F5' : '#4A6D22',
-    fillTransparent: false,
-    gradient: false,
-    gradientEndColor: '#88B04B',
-    gradientAngle: 135,
-    strokeColor: isTextbox ? '#4A6D22' : '#365314',
-    strokeWidth: isTextbox ? 1.5 : 2,
-    borderStyle: 'solid',
-    radius: isTextbox ? 8 : 12,
-    opacity: 0.98,
-    width: isTextbox ? 240 : 220,
-    height: isTextbox ? 85 : 110,
-    aspectLocked: false,
-    rotation: 0,
-    align: 'center',
-    layerPosition: isTextbox ? 'in-front' : 'inline',
-    text: isTextbox ? 'متن خود را اینجا بنویسید...' : '',
-    textColor: isTextbox ? '#1A1C16' : '#FFFFFF',
-    textSize: isTextbox ? 14 : 13,
-    textBold: false,
-    textAlign: isTextbox ? 'right' : 'center',
-    shadow: true,
-    shadowType: 'soft',
-    visible: true,
-    ...overrides,
-  };
-};
-
-export const getBlockShapes = (block: NoteBlock): ShapeConfig[] => {
-  if (Array.isArray(block.shapes) && block.shapes.length > 0) {
-    return block.shapes.map((s, i) => (s.id ? s : { ...s, id: `shp_${block.id}_${i}` }));
-  }
-  if (block.shape) {
-    return [block.shape.id ? block.shape : { ...block.shape, id: `shp_${block.id}_0` }];
-  }
-  return [];
 };
 
 export const createBlock = (type: NoteBlock['type'], overrides: Partial<NoteBlock> = {}): NoteBlock => {
@@ -59,7 +16,6 @@ export const createBlock = (type: NoteBlock['type'], overrides: Partial<NoteBloc
   if (type === 'checklist') block.items = [{ id: uid('chk'), text: '', done: false }];
   if (type === 'table') block.table = createTableData(3, 3);
   if (type === 'mediaGallery') block.gallery = { items: [] };
-  if (type === 'shape') block.shape = createShapeConfig('rect');
   return { ...block, ...overrides };
 };
 
@@ -109,9 +65,28 @@ export const parseLegacyContent = (content: string, attachments: NoteAttachment[
     const media = line.match(MEDIA_LINE);
     if (media) {
       flush();
+      const marker = media[1];
+      const caption = media[2] || '';
       const url = media[3].replace(/\|\d+px$/, '');
-      const known = byUrl.get(url);
-      blocks.push(createBlock('media', { attachmentId: known?.id, text: url, caption: media[2] || '' }));
+      let known = byUrl.get(url);
+      if (!known) {
+        const isAudio = marker === '🎙️' || url.startsWith('data:audio') || /\.(mp3|wav|ogg|m4a|webm|aac)(\?.*)?$/i.test(url);
+        const isVideo = marker === '🎬' || url.startsWith('data:video') || /\.(mp4|webm|mov|mkv)(\?.*)?$/i.test(url);
+        const isImage = marker === '!' || url.startsWith('data:image') || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(url);
+        known = {
+          id: uid('att'),
+          name: caption || (isAudio ? 'ویس ضبط‌شده' : isVideo ? 'ویدیو' : isImage ? 'تصویر' : 'فایل پیوست'),
+          type: isAudio ? 'audio' : isVideo ? 'video' : isImage ? 'image' : 'document',
+          mimeType: isAudio ? 'audio/webm' : '',
+          size: 0,
+          url,
+          position: 'bottom',
+          createdAt: new Date().toISOString(),
+        };
+        attachments.push(known);
+        byUrl.set(url, known);
+      }
+      blocks.push(createBlock('media', { attachmentId: known.id, text: url, caption }));
       continue;
     }
 
@@ -156,7 +131,10 @@ export const parseLegacyContent = (content: string, attachments: NoteAttachment[
 export const ensureBlocks = (note: Note): NoteBlock[] => {
   if (Array.isArray(note.blocks) && note.blocks.length > 0) return note.blocks;
 
-  const blocks = parseLegacyContent(note.content || '', note.attachments || []);
+  if (!note.attachments) {
+    note.attachments = [];
+  }
+  const blocks = parseLegacyContent(note.content || '', note.attachments);
 
   const referenced = new Set(blocks.filter((b) => b.type === 'media').map((b) => b.attachmentId));
   for (const att of note.attachments || []) {
@@ -186,61 +164,38 @@ export const ensureEditableBlocks = (note: Note): NoteBlock[] => {
 export const blocksToPlainText = (blocks: NoteBlock[]): string =>
   blocks
     .map((block) => {
-      const shapes = getBlockShapes(block);
-      const shapeTexts = shapes.map((s) => s.text?.trim() || '').filter(Boolean).join(' ');
-
-      let baseText = '';
       switch (block.type) {
         case 'divider':
-          baseText = '';
-          break;
+          return '';
         case 'media':
-          baseText = block.caption || '';
-          break;
+          return block.caption || '';
         case 'checklist':
-          baseText = (block.items || [])
+          return (block.items || [])
             .filter((item) => item.text.trim() !== '')
             .map((item) => `${item.done ? '[x]' : '[ ]'} ${item.text}`)
             .join('\n');
-          break;
         case 'math':
-          baseText = block.text.trim() ? `$$${block.text}$$` : '';
-          break;
+          return block.text.trim() ? `$$${block.text}$$` : '';
         case 'table':
-          baseText = (block.table?.cells || [])
+          return (block.table?.cells || [])
             .filter((c) => c.text.trim() !== '')
             .map((c) => c.text.trim())
             .join(' | ');
-          break;
         case 'mediaGallery':
-          baseText = (block.gallery?.items || [])
+          return (block.gallery?.items || [])
             .map((it) => it.caption || '')
             .filter((c) => c.trim() !== '')
             .join(' ');
-          break;
-        case 'shape':
-          baseText = shapeTexts;
-          break;
         default:
-          baseText = block.text;
+          return block.text;
       }
-
-      if (shapeTexts && block.type !== 'shape') {
-        return [baseText, shapeTexts].filter(Boolean).join(' ');
-      }
-      return baseText;
     })
     .filter((line) => line.trim() !== '')
     .join('\n\n');
 
 export const countBlockWords = (blocks: NoteBlock[]): number => {
   const text = blocks
-    .map((b) => {
-      const shapes = getBlockShapes(b);
-      const shapeTexts = shapes.map((s) => s.text?.trim() || '').filter(Boolean).join(' ');
-      const blockContent = b.type === 'checklist' ? (b.items || []).map((i) => i.text).join(' ') : b.text;
-      return [blockContent, shapeTexts].filter(Boolean).join(' ');
-    })
+    .map((b) => (b.type === 'checklist' ? (b.items || []).map((i) => i.text).join(' ') : b.text))
     .join(' ');
   return text.trim().split(/\s+/).filter(Boolean).length;
 };
@@ -254,8 +209,6 @@ export const pruneEmptyBlocks = (blocks: NoteBlock[]): NoteBlock[] =>
         : block
     )
     .filter((block) => {
-      const hasShapes = (block.shapes && block.shapes.length > 0) || Boolean(block.shape);
-      if (hasShapes) return true;
       if (block.type === 'divider') return true;
       if (block.type === 'media') return Boolean(block.attachmentId);
       if (block.type === 'checklist') return (block.items || []).length > 0;
@@ -282,7 +235,6 @@ export const BLOCK_LABELS: Record<NoteBlock['type'], string> = {
   checklist: 'چک‌لیست',
   table: 'جدول',
   mediaGallery: 'گالری رسانه',
-  shape: 'شکل',
 };
 
 export const CALLOUT_STYLES: Record<CalloutTone, { label: string; icon: LucideIcon; light: string; dark: string; text: string }> = {

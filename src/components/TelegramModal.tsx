@@ -72,6 +72,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({ isOpen, onClose, o
       const updated = await api.saveTelegramConfig(config);
       setConfig(updated);
       setStatusMessage({ type: 'success', text: 'تنظیمات تلگرام با موفقیت ذخیره شد.' });
+      if (onRefreshData) onRefreshData();
     } catch (err: any) {
       setStatusMessage({ type: 'error', text: err.message || 'خطا در ذخیره تنظیمات' });
     } finally {

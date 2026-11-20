@@ -7,14 +7,12 @@ import { MathRenderer } from '../MathRenderer';
 import { InlineText } from './InlineText';
 import { MediaFrame } from './MediaFrame';
 import { MediaGalleryRenderer } from './MediaGalleryRenderer';
-import { BlockShapesContainer } from './BlockShapesContainer';
 
 export function blockMatchesQuery(block: NoteBlock, query: string): boolean {
   if (!query || !query.trim()) return false;
   const q = query.trim().toLowerCase();
   if (block.text && block.text.toLowerCase().includes(q)) return true;
   if (block.caption && block.caption.toLowerCase().includes(q)) return true;
-  if (block.shape?.text && block.shape.text.toLowerCase().includes(q)) return true;
   if (block.items && block.items.some((item) => item.text && item.text.toLowerCase().includes(q))) return true;
   if (block.table?.cells && block.table.cells.some((cell) => cell.text && cell.text.toLowerCase().includes(q))) return true;
   return false;
@@ -106,8 +104,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
   const attachmentMap = new Map(attachments.map((a) => [a.id, a]));
 
   const renderBlock = (block: NoteBlock) => {
-    // Check if block has embedded shapes
-    const hasShapes = Boolean(block.shape || (block.shapes && block.shapes.length > 0));
     const isMatched = Boolean(searchQuery && blockMatchesQuery(block, searchQuery));
     const isActiveMatch = Boolean(searchQuery && activeMatchBlockId === block.id);
 
@@ -120,7 +116,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
               <div className={`${HEADING_CLASS[level]} ${isPrint ? 'text-[#1A1C16]' : 'text-[#1A1C16] dark:text-[#E2E3DC]'} pt-1 relative z-10`}>
                 <InlineText text={block.text} isPrint={isPrint} highlightQuery={searchQuery} />
               </div>
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
             </div>
           );
         }
@@ -148,7 +143,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
               >
                 <InlineText text={block.text} isPrint={isPrint} highlightQuery={searchQuery} />
               </blockquote>
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} isPrint={isPrint} />}
             </div>
           );
 
@@ -212,7 +206,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                     </div>
                   </div>
                 </div>
-                {hasShapes && <BlockShapesContainer block={block} compact={compact} isPrint={true} />}
               </div>
             );
           }
@@ -227,7 +220,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                   <InlineText text={block.text} isPrint={isPrint} highlightQuery={searchQuery} />
                 </div>
               </div>
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
             </div>
           );
         }
@@ -260,7 +252,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                   <InlineText text={block.text} isPrint={isPrint} highlightQuery={searchQuery} renderMath={false} />
                 </code>
               </pre>
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
             </div>
           );
 
@@ -270,7 +261,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
               <div className="py-1 overflow-x-auto text-center relative z-10" dir="ltr">
                 <MathRenderer text={block.text.startsWith('$') || block.text.startsWith('\\') ? block.text : `$$${block.text}$$`} />
               </div>
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
             </div>
           );
 
@@ -278,12 +268,25 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
           return (
             <div className="block-wrapper">
               <hr className="my-2 border-dashed border-[#E1E4D5] dark:border-[#43493E]" />
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
             </div>
           );
 
         case 'media': {
-          const attachment = block.attachmentId ? attachmentMap.get(block.attachmentId) : undefined;
+          let attachment = block.attachmentId ? attachmentMap.get(block.attachmentId) : undefined;
+          if (!attachment && block.text) {
+            const isAudio = block.text.startsWith('data:audio') || /\.(mp3|wav|ogg|m4a|webm|aac)(\?.*)?$/i.test(block.text);
+            const isVideo = block.text.startsWith('data:video') || /\.(mp4|webm|mov|mkv)(\?.*)?$/i.test(block.text);
+            const isImage = block.text.startsWith('data:image') || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(block.text);
+            attachment = {
+              id: block.attachmentId || block.id,
+              name: block.caption || (isAudio ? 'ویس ضبط‌شده' : isVideo ? 'ویدیو' : isImage ? 'تصویر' : 'رسانه'),
+              type: isAudio ? 'audio' : isVideo ? 'video' : isImage ? 'image' : 'document',
+              mimeType: isAudio ? 'audio/webm' : '',
+              size: 0,
+              url: block.text,
+              createdAt: new Date().toISOString(),
+            };
+          }
           if (!attachment) return null;
           return (
             <div className="block-wrapper">
@@ -294,20 +297,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                 onZoom={attachment.type === 'image' ? setZoomed : undefined}
                 compact={compact}
               />
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
-            </div>
-          );
-        }
-
-        case 'shape': {
-          return (
-            <div className="block-wrapper py-1">
-              <BlockShapesContainer block={block} compact={compact} />
-              {block.text && (
-                <div className={`text-xs ${isPrint ? 'text-[#1A1C16]' : 'text-[#24292F] dark:text-[#D1D5DB]'} pt-1`}>
-                  <InlineText text={block.text} isPrint={isPrint} highlightQuery={searchQuery} />
-                </div>
-              )}
             </div>
           );
         }
@@ -382,7 +371,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                   </button>
                 ))}
               </div>
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
             </div>
           );
         }
@@ -418,7 +406,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
                   </tbody>
                 </table>
               </div>
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
             </div>
           );
         }
@@ -429,7 +416,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
           return (
             <div className="block-wrapper my-1">
               <MediaGalleryRenderer gallery={g} attachments={attachments} onZoom={setZoomed} />
-              {hasShapes && <BlockShapesContainer block={block} compact={compact} />}
             </div>
           );
         }
@@ -437,8 +423,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
         default:
           return (
             <div className="block-wrapper">
-              {/* Floated shapes if any */}
-              {hasShapes && <BlockShapesContainer block={block} alignmentFilter="float" compact={compact} />}
               <div
                 className={`text-xs sm:text-sm leading-[1.9] ${
                   isPrint ? 'text-[#1A1C16]' : 'text-[#24292F] dark:text-[#D1D5DB]'
@@ -446,8 +430,6 @@ export const BlockRenderer: React.FC<BlockRendererProps> = ({
               >
                 <InlineText text={block.text} isPrint={isPrint} highlightQuery={searchQuery} />
               </div>
-              {/* Inline / block shapes */}
-              {hasShapes && <BlockShapesContainer block={block} alignmentFilter="inline" compact={compact} />}
             </div>
           );
       }

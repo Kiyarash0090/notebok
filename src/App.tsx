@@ -21,12 +21,14 @@ import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { NoteCard } from './components/NoteCard';
 import { LoadingScreen } from './components/LoadingScreen';
+import { AuthScreen } from './components/AuthScreen';
 import { PrintView } from './components/PrintView';
 import { NoteEditor } from './components/editor/NoteEditor';
 import { CategoryManagerModal } from './components/CategoryManagerModal';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { AdvancedSearchModal, AdvancedSearchFilters } from './components/AdvancedSearchModal';
 import { TelegramModal } from './components/TelegramModal';
+import { FileManagerModal } from './components/FileManagerModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { FloatingCategoryTabs } from './components/FloatingCategoryTabs';
 import { NoteSlideshowModal } from './components/NoteSlideshowModal';
@@ -57,6 +59,11 @@ export default function App() {
   const handleToggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
+
+  // Auth States
+  const [authState, setAuthState] = useState<'checking' | 'setup' | 'login' | 'authenticated'>('checking');
+  const [currentUsername, setCurrentUsername] = useState<string>('');
+  const [authCheckError, setAuthCheckError] = useState<string | null>(null);
 
   // Main Data States
   const [notes, setNotes] = useState<Note[]>([]);
@@ -97,7 +104,10 @@ export default function App() {
     setIsCategoryManagerOpen(true);
   };
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [isFileManagerOpen, setIsFileManagerOpen] = useState(false);
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
+  const [isTelegramReady, setIsTelegramReady] = useState(false);
+  const [telegramRefreshKey, setTelegramRefreshKey] = useState(0);
   const [isSlideshowOpen, setIsSlideshowOpen] = useState(false);
   const [slideshowCategoryId, setSlideshowCategoryId] = useState<string | null>(null);
 
@@ -126,6 +136,7 @@ export default function App() {
     isSidebarOpen ||
     isCategoryManagerOpen ||
     isBackupModalOpen ||
+    isFileManagerOpen ||
     isAdvancedSearchOpen ||
     isTelegramModalOpen ||
     isSlideshowOpen ||
@@ -181,15 +192,26 @@ export default function App() {
   };
 
   // Fetch initial data from server
+  const refreshTelegramStatus = useCallback(async () => {
+    try {
+      const status = await api.getTelegramStatus();
+      setIsTelegramReady(Boolean(status.ready));
+    } catch {
+      setIsTelegramReady(false);
+    }
+  }, []);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [fetchedNotes, fetchedCategories] = await Promise.all([
+      const [fetchedNotes, fetchedCategories, tgStatus] = await Promise.all([
         api.getNotes(),
         api.getCategories(),
+        api.getTelegramStatus().catch(() => ({ ready: false })),
       ]);
       setNotes(fetchedNotes);
       setCategories(fetchedCategories);
+      setIsTelegramReady(Boolean(tgStatus.ready));
       setError(null);
     } catch (err: any) {
       console.error(err);
@@ -199,9 +221,76 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
+  const resetSessionViews = useCallback(() => {
+    setIsEditorOpen(false);
+    setEditingNote(null);
+    setIsSidebarOpen(false);
+    setIsCategoryManagerOpen(false);
+    setIsBackupModalOpen(false);
+    setIsFileManagerOpen(false);
+    setIsAdvancedSearchOpen(false);
+    setIsTelegramModalOpen(false);
+    setIsSlideshowOpen(false);
+    setPrintNote(null);
+    setNotes([]);
+    setCategories([]);
+    setCurrentUsername('');
+  }, []);
+
+  const checkAuthAndLoad = useCallback(async () => {
+    setAuthState('checking');
+    setAuthCheckError(null);
+    try {
+      const status = await api.getAuthStatus();
+      if (!status.configured) {
+        setIsLoading(false);
+        setAuthState('setup');
+        return;
+      }
+      if (!status.authenticated) {
+        setIsLoading(false);
+        setAuthState('login');
+        return;
+      }
+      setCurrentUsername(status.username || '');
+      setAuthState('authenticated');
+      await loadData();
+    } catch (err) {
+      console.error(err);
+      setIsLoading(false);
+      setAuthCheckError('عدم برقراری ارتباط با سرور. لطفاً دوباره تلاش کنید.');
+    }
   }, [loadData]);
+
+  useEffect(() => {
+    checkAuthAndLoad();
+  }, [checkAuthAndLoad]);
+
+  useEffect(() => {
+    const handleUnauthorized = async () => {
+      resetSessionViews();
+      try {
+        const status = await api.getAuthStatus();
+        setAuthState(status.configured ? 'login' : 'setup');
+      } catch {
+        setAuthState('login');
+      }
+    };
+    window.addEventListener('nivra:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('nivra:unauthorized', handleUnauthorized);
+  }, [resetSessionViews]);
+
+  const handleAuthenticated = useCallback(async (username: string) => {
+    setCurrentUsername(username);
+    setAuthState('authenticated');
+    await loadData();
+  }, [loadData]);
+
+  const handleLogout = useCallback(async () => {
+    await api.logout();
+    resetSessionViews();
+    setAuthState('login');
+  }, [resetSessionViews]);
 
   // Calculations & Counts
   const counts = useMemo(() => {
@@ -513,6 +602,46 @@ export default function App() {
     return 'همه جزوه‌ها و یادداشت‌ها';
   }, [currentFilter, selectedCategory, categories, searchQuery]);
 
+  if (authState === 'checking') {
+    if (authCheckError) {
+      return (
+        <div
+          className="min-h-screen bg-[#FAF9F5] dark:bg-[#12140E] text-[#1A1C16] dark:text-[#E2E3DC] flex items-center justify-center px-4"
+          dir="rtl"
+        >
+          <div className="bg-white dark:bg-[#1C1C17] border border-[#E1E4D5] dark:border-[#43493E] rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-sm">
+            <div className="w-12 h-12 rounded-2xl bg-[#5C1A1A]/15 text-[#A64D3B] dark:text-[#FFAB91] flex items-center justify-center mx-auto">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <p className="text-xs sm:text-sm text-[#43493E] dark:text-[#C4C7BA] leading-relaxed">
+              {authCheckError}
+            </p>
+            <button
+              type="button"
+              onClick={checkAuthAndLoad}
+              className="w-full py-2.5 px-4 rounded-2xl bg-[#4A6D22] hover:bg-[#3B571B] dark:bg-[#D0E8B2] dark:hover:bg-[#BDE098] text-white dark:text-[#1A3700] text-xs font-bold transition-colors cursor-pointer"
+            >
+              تلاش مجدد
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return <LoadingScreen />;
+  }
+
+  if (authState === 'setup' || authState === 'login') {
+    return (
+      <AuthScreen
+        mode={authState}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
+        onAuthenticated={handleAuthenticated}
+        onNeedsSetup={() => setAuthState('setup')}
+      />
+    );
+  }
+
   // Full-screen splash while the app loads its data
   if (isLoading) return <LoadingScreen />;
 
@@ -529,10 +658,14 @@ export default function App() {
         onOpenAdvancedSearch={() => setIsAdvancedSearchOpen(true)}
         hasActiveAdvancedFilters={hasActiveAdvancedFilters}
         onOpenBackup={() => setIsBackupModalOpen(true)}
+        onOpenFileManager={() => setIsFileManagerOpen(true)}
+        isTelegramReady={isTelegramReady}
         onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
         onOpenTelegramStorage={() => setIsTelegramModalOpen(true)}
         isSaving={isSaving}
         notesCount={counts.all}
+        username={currentUsername}
+        onLogout={handleLogout}
       />
 
       {/* Main Layout Body */}
@@ -551,6 +684,8 @@ export default function App() {
           categories={categories}
           onOpenCategoryManager={handleOpenCategoryManager}
           onOpenBackup={() => setIsBackupModalOpen(true)}
+          onOpenFileManager={() => setIsFileManagerOpen(true)}
+          isTelegramReady={isTelegramReady}
           onOpenTelegramStorage={() => setIsTelegramModalOpen(true)}
           onOpenSlideshow={handleOpenSlideshow}
           counts={counts}
@@ -808,7 +943,8 @@ export default function App() {
         }}
         onOpenCreateModal={handleOpenCreateModal}
         onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
-        onOpenBackup={() => setIsBackupModalOpen(true)}
+        onOpenFileManager={() => setIsFileManagerOpen(true)}
+        isTelegramReady={isTelegramReady}
         importantCount={counts.important}
       />
 
@@ -879,8 +1015,25 @@ export default function App() {
       {/* Telegram Cloud Storage Modal */}
       <TelegramModal
         isOpen={isTelegramModalOpen}
-        onClose={() => setIsTelegramModalOpen(false)}
-        onRefreshData={loadData}
+        onClose={() => {
+          setIsTelegramModalOpen(false);
+          refreshTelegramStatus();
+          setTelegramRefreshKey((k) => k + 1);
+        }}
+        onRefreshData={() => {
+          loadData();
+          refreshTelegramStatus();
+          setTelegramRefreshKey((k) => k + 1);
+        }}
+      />
+
+      {/* File Manager Modal */}
+      <FileManagerModal
+        isOpen={isFileManagerOpen}
+        onClose={() => setIsFileManagerOpen(false)}
+        onOpenTelegramSettings={() => setIsTelegramModalOpen(true)}
+        telegramRefreshKey={telegramRefreshKey}
+        onTelegramStatusChange={setIsTelegramReady}
       />
 
       {/* Exam Review Slideshow Modal */}
@@ -897,7 +1050,7 @@ export default function App() {
       {/* Toast Floating Notification */}
       {toast && (
         <div
-          className={`fixed bottom-18 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-full text-xs font-bold shadow-xl transition-all flex items-center gap-2 border ${
+          className={`fixed bottom-[calc(6.25rem+env(safe-area-inset-bottom,0px))] lg:bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-2rem)] px-5 py-2.5 rounded-full text-xs font-bold shadow-xl transition-all flex items-center gap-2 border ${
             toast.type === 'error'
               ? 'bg-[#5C1A1A] text-[#FFAB91] border-[#5C1A1A]'
               : 'bg-[#1C1C17] text-[#E2E3DC] border-[#43493E]'

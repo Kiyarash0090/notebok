@@ -23,12 +23,37 @@ export function preprocessLatex(latex: string): string {
     str = str.replace(/(?<!\\)&/g, '\\&');
   }
   return str.replace(
-    /(\\text\{[^\}]*\})|([\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+(?:\s+[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+)*)/g,
+    /(\\text\{[^\}]*\})|([\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF\u200C\u200D]+(?:\s+[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF\u200C\u200D]+)*)/g,
     (match, alreadyText, persianText) => {
       if (alreadyText) return alreadyText;
       return `\\text{${persianText}}`;
     }
   );
+}
+
+/**
+ * Renders LaTeX with KaTeX while suppressing noisy "No character metrics" warnings
+ * that KaTeX emits unconditionally for Persian/Arabic Unicode characters inside \text{...}.
+ */
+export function renderKatexSafe(latex: string, displayMode: boolean): string {
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    const first = args[0];
+    if (typeof first === 'string' && first.startsWith('No character metrics ')) {
+      return;
+    }
+    origWarn.apply(console, args);
+  };
+  try {
+    return katex.renderToString(latex, {
+      displayMode,
+      throwOnError: false,
+      strict: false,
+      output: 'htmlAndMathml',
+    });
+  } finally {
+    console.warn = origWarn;
+  }
 }
 
 /**
@@ -167,12 +192,7 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = ''
         const mathFormula = inlineMatch[1];
         const processed = preprocessLatex(mathFormula);
         try {
-          const html = katex.renderToString(processed, {
-            displayMode: false,
-            throwOnError: false,
-            strict: false,
-            output: 'htmlAndMathml',
-          });
+          const html = renderKatexSafe(processed, false);
           inlineParts.push(
             <span
               key={`${keyPrefix}-m-${inlineMatch.index}`}
@@ -199,12 +219,7 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = ''
         if (/^\\[a-zA-Z]+/.test(remaining.trim())) {
           const processed = preprocessLatex(remaining.trim());
           try {
-            const html = katex.renderToString(processed, {
-              displayMode: false,
-              throwOnError: false,
-              strict: false,
-              output: 'htmlAndMathml',
-            });
+            const html = renderKatexSafe(processed, false);
             inlineParts.push(
               <span
                 key={`${keyPrefix}-m-standalone`}
@@ -249,12 +264,7 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text, className = ''
       for (const line of formulaLines) {
         const processed = preprocessLatex(line);
         try {
-          const html = katex.renderToString(processed, {
-            displayMode: true,
-            throwOnError: false,
-            strict: false,
-            output: 'htmlAndMathml',
-          });
+          const html = renderKatexSafe(processed, true);
           renderedLines.push({ html, isError: false, raw: line });
         } catch {
           renderedLines.push({ html: '', isError: true, raw: line });

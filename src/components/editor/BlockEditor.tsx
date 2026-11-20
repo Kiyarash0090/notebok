@@ -3,27 +3,16 @@ import {
   GripVertical,
   Sigma,
   Trash2,
-  Italic,
   ArrowUp,
   ArrowDown,
-  Square,
-  Circle,
-  Triangle,
-  ArrowRight,
-  Minus,
-  Star,
-  Shapes,
-  Plus,
   X,
+  Check,
 } from 'lucide-react';
-import { NoteAttachment, NoteBlock, ShapeConfig, ShapeKind } from '../../types';
+import { NoteAttachment, NoteBlock } from '../../types';
 import {
   CALLOUT_STYLES,
   BLOCK_LABELS,
-  createChecklistItem,
   createTableData,
-  createShapeConfig,
-  getBlockShapes,
 } from '../../lib/blocks';
 import { MATH_SNIPPET_GROUPS } from '../../lib/mathSnippets';
 
@@ -40,11 +29,9 @@ const FAMOUS_FORMULAS = [
 ];
 import { MathRenderer } from '../MathRenderer';
 import { MediaFrame } from '../blocks/MediaFrame';
-import { ShapeSvg } from '../blocks/ShapeSvg';
-import { BlockShapesContainer } from '../blocks/BlockShapesContainer';
 import { TableEditor } from './TableEditor';
 import { MediaGalleryEditor } from './MediaGalleryEditor';
-import { ShapeCustomizerModal } from './ShapeCustomizerModal';
+import { RichInlineEditor } from './RichInlineEditor';
 
 interface BlockEditorProps {
   block: NoteBlock;
@@ -61,6 +48,7 @@ interface BlockEditorProps {
   // The parent owns which block is "active" so only one control rail shows.
   active?: boolean;
   onActivateChange?: (active: boolean) => void;
+  searchQuery?: string;
 }
 
 const railBtn =
@@ -80,26 +68,35 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
   onRemoveGalleryItem,
   active = false,
   onActivateChange = () => {},
+  searchQuery,
 }) => {
   const [dragging, setDragging] = useState(false);
+  const dragTouchY = useRef<number | null>(null);
   const [mathPaletteOpen, setMathPaletteOpen] = useState(false);
   const [mathCategory, setMathCategory] = useState<number>(0);
-  const [newShapeModalOpen, setNewShapeModalOpen] = useState(false);
+  const [editingMath, setEditingMath] = useState(() => block.type === 'math' && !block.text?.trim());
   const mathAreaRef = useRef<HTMLTextAreaElement | null>(null);
-  const dragTouchY = useRef<number | null>(null);
-  const attachment = block.type === 'media' ? attachments.find((a) => a.id === block.attachmentId) : undefined;
-
-  const shapes = getBlockShapes(block);
-  const hasShapes = shapes.length > 0;
-
-  const handleUpdateShapes = (updatedShapes: ShapeConfig[]) => {
-    onUpdate(block.id, { shapes: updatedShapes, shape: undefined });
-  };
-
-  const handleAddShapeToThisBlock = (shapeConfig: ShapeConfig) => {
-    const nextShapes = [...shapes, shapeConfig];
-    onUpdate(block.id, { shapes: nextShapes, shape: undefined });
-  };
+  const mathBoxRef = useRef<HTMLDivElement | null>(null);
+  const attachment = React.useMemo(() => {
+    if (block.type !== 'media') return undefined;
+    const found = attachments.find((a) => a.id === block.attachmentId);
+    if (found) return found;
+    if (block.text) {
+      const isAudio = block.text.startsWith('data:audio') || /\.(mp3|wav|ogg|m4a|webm|aac)(\?.*)?$/i.test(block.text);
+      const isVideo = block.text.startsWith('data:video') || /\.(mp4|webm|mov|mkv)(\?.*)?$/i.test(block.text);
+      const isImage = block.text.startsWith('data:image') || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(block.text);
+      return {
+        id: block.attachmentId || block.id,
+        name: block.caption || (isAudio ? 'ویس ضبط‌شده' : isVideo ? 'ویدیو' : isImage ? 'تصویر' : 'رسانه'),
+        type: isAudio ? 'audio' : isVideo ? 'video' : isImage ? 'image' : 'document',
+        mimeType: isAudio ? 'audio/webm' : '',
+        size: 0,
+        url: block.text,
+        createdAt: new Date().toISOString(),
+      } as NoteAttachment;
+    }
+    return undefined;
+  }, [block, attachments]);
 
   // Inserts a LaTeX snippet at the textarea caret, or at the end when the field
   // was never focused. The `|` in a template marks the post-insert caret spot.
@@ -123,37 +120,25 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
   };
 
   const textArea = (placeholder: string, rows = 1) => {
-    const lineCount = (block.text || '').split('\n').length;
     return (
-      <textarea
+      <RichInlineEditor
         value={block.text}
+        onChange={(nextText) => onUpdate(block.id, { text: nextText })}
         placeholder={placeholder}
-        rows={Math.max(rows, lineCount)}
         dir="auto"
-        data-block-id={block.id}
-        onChange={(e) => onUpdate(block.id, { text: e.target.value })}
-        onInput={(e) => {
-          const target = e.currentTarget;
-          target.style.height = 'auto';
-          target.style.height = `${target.scrollHeight}px`;
-        }}
-        ref={(el) => {
-          if (el) {
-            el.style.height = 'auto';
-            el.style.height = `${el.scrollHeight}px`;
-          }
-        }}
+        dataBlockId={block.id}
+        searchQuery={searchQuery}
         onKeyDown={(e) => {
           // Ctrl/Cmd + Enter inserts a new block after this one
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             commandExecutor(block.id, 'insert_after');
-          } else if (e.key === 'Backspace' && e.currentTarget.value === '' && e.currentTarget.selectionStart === 0) {
+          } else if (e.key === 'Backspace' && block.text === '') {
             e.preventDefault();
             commandExecutor(block.id, 'merge_up');
           }
         }}
-        className="w-full bg-transparent resize-none outline-none placeholder:text-[#8F9285] field-sizing-content leading-relaxed overflow-hidden"
+        className="leading-relaxed"
         style={{ minHeight: `${rows * 1.75}em` }}
       />
     );
@@ -170,89 +155,80 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
             ? 'text-sm sm:text-base font-bold'
             : 'text-xs sm:text-sm font-bold';
         return (
-          <div className="space-y-1">
-            <div className={`${fontClass} text-[#1A1C16] dark:text-[#E2E3DC]`}>
-              {textArea(level === 1 ? 'تیتر اصلی...' : level === 2 ? 'عنوان بخش...' : 'زیرعنوان...')}
-            </div>
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
+          <div className={`${fontClass} text-[#1A1C16] dark:text-[#E2E3DC]`}>
+            {textArea(level === 1 ? 'تیتر اصلی...' : level === 2 ? 'عنوان بخش...' : 'زیرعنوان...')}
           </div>
         );
       }
       case 'quote':
         return (
-          <div className="space-y-1">
-            <div className="border-r-3 border-[#D0E8B2] dark:border-[#4A6D22] pr-3 italic text-xs sm:text-sm text-[#3F4A35] dark:text-[#BCC2B2]">
-              {textArea('نقل قول...')}
-            </div>
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
+          <div className="border-r-3 border-[#D0E8B2] dark:border-[#4A6D22] pr-3 italic text-xs sm:text-sm text-[#3F4A35] dark:text-[#BCC2B2]">
+            {textArea('نقل قول...')}
           </div>
         );
       case 'callout': {
         const style = CALLOUT_STYLES[block.tone || 'info'];
         return (
-          <div className="space-y-1">
-            <div className={`flex gap-2.5 items-start p-3 rounded-2xl border ${style.light} ${style.dark} text-xs sm:text-sm`}>
-              <span className="flex items-center pt-0.5"><style.icon className="w-4 h-4" /></span>
-              <div className={`min-w-0 flex-1 leading-relaxed ${style.text}`}>
-                {textArea('متن تأکیدی یا نکته کلیدی...')}
-              </div>
+          <div className={`flex gap-2.5 items-start p-3 rounded-2xl border ${style.light} ${style.dark} text-xs sm:text-sm`}>
+            <span className="flex items-center pt-0.5"><style.icon className="w-4 h-4" /></span>
+            <div className={`min-w-0 flex-1 leading-relaxed ${style.text}`}>
+              {textArea('متن تأکیدی یا نکته کلیدی...')}
             </div>
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
           </div>
         );
       }
       case 'code':
         return (
-          <div className="space-y-1">
-            <div className="p-3 rounded-2xl bg-[#1C1C17] dark:bg-[#0F110C] text-[#E2E3DC] text-[11px] sm:text-xs border border-[#43493E] font-mono" dir="ltr">
-              <textarea
-                value={block.text}
-                placeholder="// کد خود را اینجا وارد کنید..."
-                rows={Math.max(3, (block.text || '').split('\n').length)}
-                onChange={(e) => onUpdate(block.id, { text: e.target.value })}
-                onInput={(e) => {
-                  e.currentTarget.style.height = 'auto';
-                  e.currentTarget.style.height = `${Math.max(72, e.currentTarget.scrollHeight)}px`;
-                }}
-                ref={(el) => {
-                  if (el) {
-                    el.style.height = 'auto';
-                    el.style.height = `${Math.max(72, el.scrollHeight)}px`;
-                  }
-                }}
-                className="w-full bg-transparent resize-none outline-none font-mono text-[#E2E3DC] placeholder:text-[#8F9285] leading-relaxed overflow-hidden"
-              />
-            </div>
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
+          <div className="p-3 rounded-2xl bg-[#1C1C17] dark:bg-[#0F110C] text-[#E2E3DC] text-[11px] sm:text-xs border border-[#43493E] font-mono" dir="ltr">
+            <textarea
+              value={block.text}
+              placeholder="// کد خود را اینجا وارد کنید..."
+              rows={Math.max(3, (block.text || '').split('\n').length)}
+              onChange={(e) => onUpdate(block.id, { text: e.target.value })}
+              onInput={(e) => {
+                e.currentTarget.style.height = 'auto';
+                e.currentTarget.style.height = `${Math.max(72, e.currentTarget.scrollHeight)}px`;
+              }}
+              ref={(el) => {
+                if (el) {
+                  el.style.height = 'auto';
+                  el.style.height = `${Math.max(72, el.scrollHeight)}px`;
+                }
+              }}
+              className="w-full bg-transparent resize-none outline-none font-mono text-[#E2E3DC] placeholder:text-[#8F9285] leading-relaxed overflow-hidden"
+            />
           </div>
         );
       case 'math':
+        if (!editingMath && block.text.trim()) {
+          return (
+            <div
+              onClick={() => {
+                setEditingMath(true);
+                requestAnimationFrame(() => mathAreaRef.current?.focus());
+              }}
+              className="py-2 px-3 rounded-2xl hover:bg-[#FAF2DE]/50 dark:hover:bg-[#1C1C17] border border-transparent hover:border-[#E1E4D5] dark:hover:border-[#43493E] overflow-x-auto text-center cursor-pointer transition-colors"
+              dir="ltr"
+              title="برای ویرایش فرمول کلیک کنید"
+            >
+              <MathRenderer
+                text={block.text.startsWith('$') || block.text.startsWith('\\') ? block.text : `$$${block.text}$$`}
+              />
+            </div>
+          );
+        }
+
         return (
-          <div className="space-y-2">
+          <div
+            ref={mathBoxRef}
+            onBlurCapture={(e) => {
+              if (!mathBoxRef.current?.contains(e.relatedTarget as Node) && block.text.trim()) {
+                setEditingMath(false);
+                setMathPaletteOpen(false);
+              }
+            }}
+            className="space-y-2"
+          >
             <div className="p-3 rounded-2xl bg-[#FAF2DE] dark:bg-[#1C1C17] border border-[#E1E4D5] dark:border-[#43493E]">
               {/* Header with title and toggle button */}
               <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#E1E4D5]/80 dark:border-[#43493E]/80 gap-2 flex-wrap" dir="rtl">
@@ -260,19 +236,35 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                   <Sigma className="w-4 h-4 shrink-0" />
                   <span>فرمول ریاضی (LaTeX)</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setMathPaletteOpen((prev) => !prev)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs active:scale-95 touch-manipulation cursor-pointer ${
-                    mathPaletteOpen
-                      ? 'bg-[#4A6D22] text-white dark:bg-[#D0E8B2] dark:text-[#1A3700]'
-                      : 'bg-white dark:bg-[#23261F] text-[#4A6D22] dark:text-[#D0E8B2] hover:bg-[#D0E8B2]/30 dark:hover:bg-[#324B10]/40 border border-[#E1E4D5] dark:border-[#43493E]'
-                  }`}
-                  title="نمایش و درج فرمول‌ها و نمادهای آماده"
-                >
-                  <Sigma className="w-3.5 h-3.5" />
-                  <span>{mathPaletteOpen ? 'بستن فرمول‌های آماده' : 'فرمول‌های آماده'}</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setMathPaletteOpen((prev) => !prev)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs active:scale-95 touch-manipulation cursor-pointer ${
+                      mathPaletteOpen
+                        ? 'bg-[#4A6D22] text-white dark:bg-[#D0E8B2] dark:text-[#1A3700]'
+                        : 'bg-white dark:bg-[#23261F] text-[#4A6D22] dark:text-[#D0E8B2] hover:bg-[#D0E8B2]/30 dark:hover:bg-[#324B10]/40 border border-[#E1E4D5] dark:border-[#43493E]'
+                    }`}
+                    title="نمایش و درج فرمول‌ها و نمادهای آماده"
+                  >
+                    <Sigma className="w-3.5 h-3.5" />
+                    <span>{mathPaletteOpen ? 'بستن فرمول‌های آماده' : 'فرمول‌های آماده'}</span>
+                  </button>
+                  {block.text.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingMath(false);
+                        setMathPaletteOpen(false);
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#4A6D22] text-white dark:bg-[#D0E8B2] dark:text-[#1A3700] text-xs font-bold transition-all active:scale-95 cursor-pointer"
+                      title="نمایش رندر شده"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>تایید</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Math Snippets & Formulas Palette */}
@@ -409,74 +401,49 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                 </div>
               )}
             </div>
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
           </div>
         );
       case 'divider':
         return (
           <div className="py-2">
             <hr className="border-dashed border-[#E1E4D5] dark:border-[#43493E]" />
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
           </div>
         );
       case 'media':
-        return (
-          <div className="space-y-1">
-            {attachment ? (
-              <div className="space-y-1.5">
-                <MediaFrame
-                  attachment={attachment}
-                  caption={block.caption}
-                  width={block.width}
-                  onZoom={attachment.type === 'image' ? onZoomImage : undefined}
-                />
-                <textarea
-                  value={block.caption || ''}
-                  placeholder="توضیح زیر تصویر یا رسانه (اختیاری)..."
-                  rows={Math.max(1, (block.caption || '').split('\n').length)}
-                  onChange={(e) => onUpdate(block.id, { caption: e.target.value })}
-                  onInput={(e) => {
-                    e.currentTarget.style.height = 'auto';
-                    e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`;
-                  }}
-                  ref={(el) => {
-                    if (el) {
-                      el.style.height = 'auto';
-                      el.style.height = `${el.scrollHeight}px`;
-                    }
-                  }}
-                  className="w-full text-center text-xs text-[#5E6258] dark:text-[#8F9285] bg-transparent outline-none border-b border-transparent focus:border-[#4A6D22]/40 pb-0.5 resize-none overflow-hidden"
-                />
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onPickMedia(block.id)}
-                className="w-full py-6 rounded-2xl border-2 border-dashed border-[#E1E4D5] dark:border-[#43493E] hover:border-[#4A6D22] text-xs text-[#8F9285] flex flex-col items-center gap-1.5 transition-colors"
-              >
-                <span>انتخاب تصویر یا ویدیو برای این بلوک</span>
-              </button>
-            )}
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
+        return attachment ? (
+          <div className="space-y-1.5">
+            <MediaFrame
+              attachment={attachment}
+              caption={block.caption}
+              width={block.width}
+              onZoom={attachment.type === 'image' ? onZoomImage : undefined}
+            />
+            <textarea
+              value={block.caption || ''}
+              placeholder="توضیح زیر تصویر یا رسانه (اختیاری)..."
+              rows={Math.max(1, (block.caption || '').split('\n').length)}
+              onChange={(e) => onUpdate(block.id, { caption: e.target.value })}
+              onInput={(e) => {
+                e.currentTarget.style.height = 'auto';
+                e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`;
+              }}
+              ref={(el) => {
+                if (el) {
+                  el.style.height = 'auto';
+                  el.style.height = `${el.scrollHeight}px`;
+                }
+              }}
+              className="w-full text-center text-xs text-[#5E6258] dark:text-[#8F9285] bg-transparent outline-none border-b border-transparent focus:border-[#4A6D22]/40 pb-0.5 resize-none overflow-hidden"
+            />
           </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onPickMedia(block.id)}
+            className="w-full py-6 rounded-2xl border-2 border-dashed border-[#E1E4D5] dark:border-[#43493E] hover:border-[#4A6D22] text-xs text-[#8F9285] flex flex-col items-center gap-1.5 transition-colors"
+          >
+            <span>انتخاب تصویر یا ویدیو برای این بلوک</span>
+          </button>
         );
       case 'checklist': {
         const items = block.items || [];
@@ -495,14 +462,15 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                     }
                     className="w-4 h-4 rounded accent-[#4A6D22] dark:accent-[#D0E8B2] cursor-pointer"
                   />
-                  <input
-                    type="text"
-                    data-check-item={item.id}
+                  <RichInlineEditor
+                    singleLine
+                    dataCheckItem={item.id}
                     value={item.text}
                     placeholder="مورد چک‌لیست..."
-                    onChange={(e) =>
+                    searchQuery={searchQuery}
+                    onChange={(nextText) =>
                       onUpdate(block.id, {
-                        items: items.map((i) => (i.id === item.id ? { ...i, text: e.target.value } : i)),
+                        items: items.map((i) => (i.id === item.id ? { ...i, text: nextText } : i)),
                       })
                     }
                     onKeyDown={(e) => {
@@ -514,7 +482,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                         nextItems.splice(idx + 1, 0, newItem);
                         onUpdate(block.id, { items: nextItems });
                         setTimeout(() => {
-                          const nextInput = document.querySelector<HTMLInputElement>(`[data-check-item="${newItemId}"]`);
+                          const nextInput = document.querySelector<HTMLElement>(`[data-check-item="${newItemId}"]`);
                           nextInput?.focus();
                         }, 40);
                       } else if (e.key === 'Backspace' && item.text === '' && items.length > 1) {
@@ -523,13 +491,13 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                         onUpdate(block.id, { items: items.filter((i) => i.id !== item.id) });
                         if (prevItem) {
                           setTimeout(() => {
-                            const prevInput = document.querySelector<HTMLInputElement>(`[data-check-item="${prevItem.id}"]`);
+                            const prevInput = document.querySelector<HTMLElement>(`[data-check-item="${prevItem.id}"]`);
                             prevInput?.focus();
                           }, 40);
                         }
                       }
                     }}
-                    className={`flex-1 bg-transparent text-xs outline-none ${
+                    className={`flex-1 text-xs ${
                       item.done ? 'line-through text-[#8F9285]' : 'text-[#1A1C16] dark:text-[#E2E3DC]'
                     }`}
                   />
@@ -546,94 +514,35 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
                 </div>
               ))}
             </div>
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
           </div>
         );
       }
       case 'table':
         return (
-          <div className="space-y-2">
-            <TableEditor
-              data={block.table || createTableData(3, 3)}
-              active={active}
-              onUpdate={(d) => onUpdate(block.id, { table: d })}
-            />
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
-          </div>
+          <TableEditor
+            data={block.table || createTableData(3, 3)}
+            active={active}
+            onUpdate={(d) => onUpdate(block.id, { table: d })}
+            searchQuery={searchQuery}
+          />
         );
-      case 'shape': {
-        return (
-          <div className="space-y-2">
-            <BlockShapesContainer
-              block={block}
-              isEditable={true}
-              onUpdateShapes={handleUpdateShapes}
-            />
-            <div className="text-xs text-[#24292F] dark:text-[#D1D5DB] pt-1">
-              {textArea('متن یا توضیح همراه شکل (اختیاری)...')}
-            </div>
-          </div>
-        );
-      }
-
       case 'mediaGallery':
         return (
-          <div className="space-y-2">
-            <MediaGalleryEditor
-              items={block.gallery?.items || []}
-              attachments={attachments}
-              onUpdateItems={(items) => onUpdate(block.id, { gallery: { items } })}
-              onAdd={() => onAddGalleryItems(block.id)}
-              onReplace={(idx) => onReplaceGalleryItem(block.id, idx)}
-              onRemoveItem={(idx) => onRemoveGalleryItem(block.id, idx)}
-              onZoom={onZoomImage}
-              active={active}
-            />
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
-          </div>
+          <MediaGalleryEditor
+            items={block.gallery?.items || []}
+            attachments={attachments}
+            onUpdateItems={(items) => onUpdate(block.id, { gallery: { items } })}
+            onAdd={() => onAddGalleryItems(block.id)}
+            onReplace={(idx) => onReplaceGalleryItem(block.id, idx)}
+            onRemoveItem={(idx) => onRemoveGalleryItem(block.id, idx)}
+            onZoom={onZoomImage}
+            active={active}
+          />
         );
       default:
         return (
-          <div className="space-y-1">
-            {/* Floated shapes */}
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                alignmentFilter="float"
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
-            <div className="text-xs sm:text-sm leading-[1.9] text-[#24292F] dark:text-[#D1D5DB]">
-              {textArea('متن خود را بنویسید...')}
-            </div>
-            {/* Inline / block shapes */}
-            {hasShapes && (
-              <BlockShapesContainer
-                block={block}
-                isEditable={true}
-                alignmentFilter="inline"
-                onUpdateShapes={handleUpdateShapes}
-              />
-            )}
+          <div className="text-xs sm:text-sm leading-[1.9] text-[#24292F] dark:text-[#D1D5DB]">
+            {textArea('متن خود را بنویسید...')}
           </div>
         );
     }
@@ -707,17 +616,6 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
       } sm:group-hover/block:opacity-100 sm:group-hover/block:pointer-events-auto flex-wrap`}>
         <span className="text-[9px] text-[#8F9285] font-semibold">{BLOCK_LABELS[block.type]}</span>
 
-        {/* Quick Add Shape Button to THIS block */}
-        <button
-          type="button"
-          onClick={() => setNewShapeModalOpen(true)}
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-black/5 dark:bg-white/5 hover:bg-[#D0E8B2] hover:text-[#1A3700] text-[9px] font-bold text-[#4A6D22] dark:text-[#D0E8B2] transition-colors"
-          title="افزودن شکل ورد به این بلوک"
-        >
-          <Shapes className="w-3 h-3" />
-          <span>+ شکل</span>
-        </button>
-
         {block.type === 'media' && (
           <>
             <button type="button" onClick={() => onPickMedia(block.id)} className="text-[9px] font-bold text-[#4A6D22] dark:text-[#D0E8B2] hover:underline">
@@ -772,19 +670,6 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({
         )}
         <span className="hidden sm:inline mr-auto text-[9px] text-[#8F9285]">⌘/Ctrl+Enter برای افزودن بلوک بعدی</span>
       </div>
-
-      {/* Modal for adding a new shape to this specific block */}
-      {newShapeModalOpen && (
-        <ShapeCustomizerModal
-          isOpen={true}
-          shape={createShapeConfig('rect')}
-          onSave={(createdShape) => {
-            handleAddShapeToThisBlock(createdShape);
-            setNewShapeModalOpen(false);
-          }}
-          onClose={() => setNewShapeModalOpen(false)}
-        />
-      )}
     </div>
   );
 };

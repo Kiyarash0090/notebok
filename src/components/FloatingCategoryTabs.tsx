@@ -63,6 +63,7 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
   const longPressTimerRef = useRef<number | null>(null);
   const pointerStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
+  const activeDragTargetRef = useRef<HTMLDivElement | null>(null);
   const activeDragIdRef = useRef<string | null>(null);
   const isDragActiveRef = useRef(false);
   const isSubcategoryDragRef = useRef(false);
@@ -346,12 +347,21 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
     }
     stopAutoScroll();
 
+    if (activeDragTargetRef.current && activePointerIdRef.current !== null) {
+      try {
+        if (activeDragTargetRef.current.hasPointerCapture?.(activePointerIdRef.current)) {
+          activeDragTargetRef.current.releasePointerCapture(activePointerIdRef.current);
+        }
+      } catch {}
+    }
+
     if (isDragActiveRef.current) {
       preventClickRef.current = true;
       isDragActiveRef.current = false;
       setActiveDragId(null);
       activeDragIdRef.current = null;
       activePointerIdRef.current = null;
+      activeDragTargetRef.current = null;
 
       const initialIds = initialOrderIdsRef.current;
       const finalIds = localCategoriesRef.current.map((c) => c.id);
@@ -372,6 +382,7 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
     } else {
       activeDragIdRef.current = null;
       activePointerIdRef.current = null;
+      activeDragTargetRef.current = null;
       pointerStartPosRef.current = null;
     }
   }, [stopAutoScroll, onReorderCategories]);
@@ -379,6 +390,8 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
   // Global window listeners for pointermove / pointerup
   useEffect(() => {
     const onWindowPointerMove = (e: PointerEvent) => {
+      if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return;
+
       if (isDragActiveRef.current) {
         handlePointerCoordMove(e.clientX, e.clientY);
       } else if (pointerStartPosRef.current && longPressTimerRef.current) {
@@ -392,7 +405,8 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
       }
     };
 
-    const onWindowPointerUp = () => {
+    const onWindowPointerUp = (e: PointerEvent) => {
+      if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return;
       endDrag();
     };
 
@@ -413,15 +427,15 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
     id: string,
     isSubcategory = false
   ) => {
-    // Only primary button (left click or touch)
-    if (e.button !== 0) return;
+    // Only primary button for mouse
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
 
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {}
-
+    // Never capture pointer on initial pointerdown: capturing on the parent <div>
+    // redirects pointerup away from the child <button> and prevents onClick from firing.
+    preventClickRef.current = false;
     pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
     activePointerIdRef.current = e.pointerId;
+    activeDragTargetRef.current = e.currentTarget;
     activeDragIdRef.current = id;
     isSubcategoryDragRef.current = isSubcategory;
     isDragActiveRef.current = false;
@@ -436,6 +450,12 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
       setActiveDragId(id);
       setIsDraggingSubcategory(isSubcategory);
       initialOrderIdsRef.current = localCategoriesRef.current.map((c) => c.id);
+
+      if (activeDragTargetRef.current && activePointerIdRef.current !== null) {
+        try {
+          activeDragTargetRef.current.setPointerCapture(activePointerIdRef.current);
+        } catch {}
+      }
 
       try {
         if ('vibrate' in navigator) {
@@ -475,11 +495,11 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
             data-active={isAllActive}
             title="نمایش همه جزوه‌ها"
             className={`shrink-0 flex items-center gap-1.5 rounded-lg transition-all duration-200 cursor-pointer ${
-              isCompact ? 'px-2 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'
+              isCompact ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'
             } ${
               isAllActive
                 ? 'bg-[#4A6D22] text-white shadow-xs font-bold'
-                : 'text-[#43493E] dark:text-[#E2E3DC] hover:bg-[#EAEEDF] dark:hover:bg-[#23271E]'
+                : 'text-[#2C3128] dark:text-[#F0F2EB] hover:bg-[#EAEEDF] dark:hover:bg-[#23271E]'
             }`}
           >
             <BookOpen
@@ -487,14 +507,14 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
                 isAllActive ? 'text-white' : 'text-[#4A6D22] dark:text-[#D0E8B2]'
               }`}
             />
-            <span className="font-medium">همه</span>
+            <span className="font-medium whitespace-nowrap leading-normal">همه</span>
             <span
-              className={`rounded-full transition-all ${
-                isCompact ? 'text-[9px] px-1 py-0.1' : 'text-[10px] px-1.5 py-0.5'
+              className={`rounded-full transition-all tabular-nums ${
+                isCompact ? 'text-[10px] px-1.5 py-0.5' : 'text-[10px] px-1.5 py-0.5'
               } ${
                 isAllActive
-                  ? 'bg-white/20 text-white font-bold'
-                  : 'bg-[#E5E9DB] dark:bg-[#252920] text-[#55594F] dark:text-[#9EA294]'
+                  ? 'bg-white/25 text-white font-bold'
+                  : 'bg-[#E2E6D7] dark:bg-[#2B3025] text-[#3B4035] dark:text-[#D5D9CA]'
               }`}
             >
               {totalNotesCount}
@@ -543,11 +563,11 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
                     onClick={() => handleTabClick(cat.id)}
                     data-active={isCategoryActive}
                     className={`shrink-0 flex items-center gap-1.5 rounded-lg transition-colors duration-150 cursor-pointer ${
-                      isCompact ? 'px-2 py-1 text-[11px]' : 'px-2.5 sm:px-3 py-1.5 text-xs'
+                      isCompact ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'
                     } ${
                       isCategoryActive
-                        ? 'bg-[#D0E8B2] dark:bg-[#2E4514] text-[#163300] dark:text-[#D5EBB6] font-bold shadow-xs'
-                        : 'text-[#43493E] dark:text-[#E2E3DC] hover:bg-[#EAEEDF] dark:hover:bg-[#23271E]'
+                        ? 'bg-[#D0E8B2] dark:bg-[#355118] text-[#142D00] dark:text-[#ECF8DA] font-bold shadow-xs'
+                        : 'text-[#2C3128] dark:text-[#F0F2EB] hover:bg-[#EAEEDF] dark:hover:bg-[#23271E]'
                     }`}
                   >
                     {/* Category Color Dot */}
@@ -559,7 +579,7 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
                     />
 
                     {/* Category Name */}
-                    <span className="truncate max-w-[120px] sm:max-w-[170px] font-medium leading-none pointer-events-none">
+                    <span className="whitespace-nowrap font-medium leading-normal pointer-events-none">
                       {cat.name}
                     </span>
 
@@ -570,20 +590,20 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
                           isCompact ? 'w-2.5 h-2.5' : 'w-3 h-3'
                         } ${
                           isParentOfSelected
-                            ? 'rotate-180 text-[#163300] dark:text-[#D5EBB6]'
-                            : 'opacity-50'
+                            ? 'rotate-180 text-[#142D00] dark:text-[#ECF8DA]'
+                            : 'opacity-70'
                         }`}
                       />
                     )}
 
                     {/* Note Count Badge */}
                     <span
-                      className={`rounded-full transition-all shrink-0 pointer-events-none ${
-                        isCompact ? 'text-[9px] px-1 py-0.1' : 'text-[10px] px-1.5 py-0.5'
+                      className={`rounded-full transition-all shrink-0 pointer-events-none tabular-nums ${
+                        isCompact ? 'text-[10px] px-1.5 py-0.5' : 'text-[10px] px-1.5 py-0.5'
                       } ${
                         isCategoryActive
-                          ? 'bg-black/10 dark:bg-white/10 font-bold'
-                          : 'bg-[#E5E9DB] dark:bg-[#252920] text-[#55594F] dark:text-[#9EA294]'
+                          ? 'bg-black/15 dark:bg-white/15 text-[#142D00] dark:text-[#ECF8DA] font-bold'
+                          : 'bg-[#E2E6D7] dark:bg-[#2B3025] text-[#3B4035] dark:text-[#D5D9CA]'
                       }`}
                     >
                       {totalCount}
@@ -600,7 +620,7 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
               type="button"
               onClick={() => onOpenSlideshow(selectedCategory)}
               title="مرور امتحانی به صورت اسلایدشو"
-              className="shrink-0 p-1 sm:p-1.5 rounded-lg text-[#55594F] dark:text-[#9EA294] hover:bg-[#EAEEDF] dark:hover:bg-[#23271E] hover:text-[#4A6D22] dark:hover:text-[#D0E8B2] transition-colors cursor-pointer"
+              className="shrink-0 p-1.5 rounded-lg text-[#43493E] dark:text-[#C4C8B9] hover:bg-[#EAEEDF] dark:hover:bg-[#23271E] hover:text-[#4A6D22] dark:hover:text-[#D0E8B2] transition-colors cursor-pointer"
             >
               <Presentation className="w-3.5 h-3.5" />
             </button>
@@ -612,7 +632,7 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
               type="button"
               onClick={() => onOpenCategoryManager()}
               title="مدیریت و ایجاد دسته‌بندی جدید"
-              className="shrink-0 p-1 sm:p-1.5 rounded-lg text-[#55594F] dark:text-[#9EA294] hover:bg-[#EAEEDF] dark:hover:bg-[#23271E] hover:text-[#1A1C16] dark:hover:text-white transition-colors cursor-pointer"
+              className="shrink-0 p-1.5 rounded-lg text-[#43493E] dark:text-[#C4C8B9] hover:bg-[#EAEEDF] dark:hover:bg-[#23271E] hover:text-[#1A1C16] dark:hover:text-white transition-colors cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
             </button>
@@ -627,12 +647,12 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
             }`}
           >
             {/* Parent Breadcrumb Tag */}
-            <div className="shrink-0 flex items-center gap-1 text-[10px] text-[#55594F] dark:text-[#9EA294] font-medium pr-1">
+            <div className="shrink-0 flex items-center gap-1 text-[11px] text-[#3B4035] dark:text-[#D0D4C5] font-medium pr-1">
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0"
                 style={{ backgroundColor: activeParentCategory.color || '#4A6D22' }}
               />
-              <span className="truncate max-w-[80px] sm:max-w-none">{activeParentCategory.name}:</span>
+              <span className="whitespace-nowrap leading-normal">{activeParentCategory.name}:</span>
             </div>
 
             {/* Horizontally Scrollable Subcategories Pills */}
@@ -653,14 +673,14 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
                 } ${
                   selectedCategory === activeParentCategory.id
                     ? 'bg-[#4A6D22] text-white font-bold shadow-2xs'
-                    : 'bg-[#F0F3E9] dark:bg-[#20241A] text-[#43493E] dark:text-[#E2E3DC] hover:bg-[#E5E9DB] dark:hover:bg-[#282D20]'
+                    : 'bg-[#F0F3E9] dark:bg-[#20241A] text-[#2C3128] dark:text-[#F0F2EB] hover:bg-[#E5E9DB] dark:hover:bg-[#282D20]'
                 }`}
               >
                 <Layers className="w-2.5 h-2.5 shrink-0" />
-                <span>همه</span>
+                <span className="whitespace-nowrap leading-normal">همه</span>
                 <span
-                  className={`rounded-full ${
-                    selectedCategory === activeParentCategory.id ? 'text-white/80' : 'text-[#6F7466] dark:text-[#888D7E]'
+                  className={`rounded-full tabular-nums ${
+                    selectedCategory === activeParentCategory.id ? 'text-white/90' : 'text-[#43493E] dark:text-[#C4C8B9]'
                   }`}
                 >
                   {getTotalCategoryNoteCount(activeParentCategory.id, localCategories, categoryCounts)}
@@ -696,17 +716,17 @@ export const FloatingCategoryTabs: React.FC<FloatingCategoryTabsProps> = ({
                       } ${
                         isSelected
                           ? 'bg-[#4A6D22] text-white font-bold shadow-2xs'
-                          : 'bg-[#F0F3E9] dark:bg-[#20241A] text-[#43493E] dark:text-[#E2E3DC] hover:bg-[#E5E9DB] dark:hover:bg-[#282D20]'
+                          : 'bg-[#F0F3E9] dark:bg-[#20241A] text-[#2C3128] dark:text-[#F0F2EB] hover:bg-[#E5E9DB] dark:hover:bg-[#282D20]'
                       }`}
                     >
                       <span
                         className="w-1.5 h-1.5 rounded-full shrink-0"
                         style={{ backgroundColor: subCat.color || '#4A6D22' }}
                       />
-                      <span className="font-medium pointer-events-none">{subCat.name}</span>
+                      <span className="font-medium whitespace-nowrap leading-normal pointer-events-none">{subCat.name}</span>
                       <span
-                        className={`rounded-full pointer-events-none ${
-                          isSelected ? 'text-white/80' : 'text-[#6F7466] dark:text-[#888D7E]'
+                        className={`rounded-full tabular-nums pointer-events-none ${
+                          isSelected ? 'text-white/90' : 'text-[#43493E] dark:text-[#C4C8B9]'
                         }`}
                       >
                         {subCount}
