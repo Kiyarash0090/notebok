@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
+import { DATA_DIR, ensureDir } from './dataDir';
 import {
   getTelegramConfig,
   getTelegramChannelStatus,
@@ -19,12 +19,12 @@ import {
 } from './telegramStorage';
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '60mb' }));
 
-// Paths for persistent data
-const DATA_DIR = path.join(process.cwd(), 'data');
+// Paths for persistent data (supports Railway Volume at /app/data via DATA_DIR / RAILWAY_VOLUME_MOUNT_PATH)
 const DB_FILE = path.join(DATA_DIR, 'notes_db.json');
 const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
 const SNAPSHOTS_DIR = path.join(DATA_DIR, 'snapshots');
@@ -32,9 +32,7 @@ const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const REVISIONS_DIR = path.join(DATA_DIR, 'revisions');
 
 for (const dir of [DATA_DIR, SNAPSHOTS_DIR, UPLOADS_DIR, REVISIONS_DIR]) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  ensureDir(dir);
 }
 
 // Initial default data if fresh install
@@ -2434,23 +2432,41 @@ async function startServer() {
   // Uploaded media is served straight from disk; long cache is safe because filenames are content-unique
   app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '30d', index: false }));
 
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(process.cwd(), 'dist');
+  const distIndexPath = path.join(distPath, 'index.html');
+  const isCompiledBundle = path.basename(process.argv[1] || '').endsWith('.cjs');
+  const isProduction =
+    process.env.NODE_ENV === 'production' || (isCompiledBundle && fs.existsSync(distIndexPath));
+
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(distIndexPath);
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(`Persistent data directory: ${DATA_DIR}`);
   });
+
+  const shutdown = (signal: string) => {
+    console.log(`Received ${signal}, closing HTTP server gracefully...`);
+    server.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 }
 
 startServer();

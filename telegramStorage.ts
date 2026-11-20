@@ -3,6 +3,7 @@ import path from 'path';
 import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import { CustomFile } from 'telegram/client/uploads.js';
+import { DATA_DIR, ensureDir } from './dataDir';
 
 export interface TelegramConfig {
   enabled: boolean;
@@ -26,14 +27,11 @@ export interface TelegramChannelStatus {
   chatId: string;
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data');
 const CONFIG_FILE = path.join(DATA_DIR, 'telegram_config.json');
 const SESSION_FILE = path.join(DATA_DIR, 'telegram_session.txt');
 
 // Ensure data dir exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+ensureDir(DATA_DIR);
 
 export function getTelegramConfig(): TelegramConfig {
   try {
@@ -103,7 +101,10 @@ export function getTelegramChannelStatus(cfg: TelegramConfig = getTelegramConfig
 
 export function saveTelegramConfig(config: TelegramConfig): void {
   try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+    ensureDir(DATA_DIR);
+    const tmp = `${CONFIG_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf-8');
+    fs.renameSync(tmp, CONFIG_FILE);
   } catch (err) {
     console.error('Error saving telegram_config.json:', err);
   }
@@ -120,7 +121,10 @@ function getSavedSession(): string {
 
 function saveSession(sessionStr: string): void {
   try {
-    fs.writeFileSync(SESSION_FILE, sessionStr, 'utf-8');
+    ensureDir(DATA_DIR);
+    const tmp = `${SESSION_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, sessionStr, 'utf-8');
+    fs.renameSync(tmp, SESSION_FILE);
   } catch (err) {
     console.error('Error saving session string:', err);
   }
